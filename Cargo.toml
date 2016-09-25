@@ -3,4 +3,10 @@ name = "belt-rust-task"
 version = "0.1.0"
 authors = ["David Renshaw <david@sandstorm.io>"]
 
+[[bin]]
+name="pubsub"
+path="src/main.rs"
+
 [dependencies]
+futures = "0.1.1"
+tokio-core = "0.1"
