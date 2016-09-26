@@ -18,6 +18,7 @@ struct ReadStream<R> where R: ::std::io::Read {
     buffer: Vec<u8>,
     pos: usize,
     frame_end: Option<u8>,
+    num_read: u64,
 }
 
 impl <R> ReadStream<R> where R: ::std::io::Read {
@@ -27,6 +28,7 @@ impl <R> ReadStream<R> where R: ::std::io::Read {
             buffer: Vec::new(),
             pos: 0,
             frame_end: None,
+            num_read: 0,
         }
     }
 }
@@ -42,6 +44,7 @@ impl <R> Stream for ReadStream<R> where R: ::std::io::Read {
                 self.pos += n;
                 if self.pos == frame_end as usize {
                     self.pos = 0;
+                    self.num_read += 1;
                     let result = ::std::mem::replace(&mut self.buffer, Vec::new());
                     return Ok(Async::Ready(Some(result)))
                 }
