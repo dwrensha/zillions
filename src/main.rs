@@ -129,3 +129,172 @@ pub fn main() {
 
     l.run(done).unwrap();
 }
+
+mod write_queue {
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+    use std::cell::RefCell;
+    use futures::{self, task, Async, Future, Poll, Complete, Oneshot};
+    use tokio_core::io::WriteAll;
+
+    enum State<W> where W: ::std::io::Write {
+        WritingHeader(W, Vec<u8>, Complete<Vec<u8>>),
+        Writing(WriteAll<W, Vec<u8>>, Complete<Vec<u8>>),
+        BetweenWrites(W),
+        Empty,
+    }
+
+    /// A write of messages being written.
+    pub struct WriteQueue<W> where W: ::std::io::Write {
+        inner: Rc<RefCell<Inner>>,
+        state: State<W>,
+    }
+
+    struct Inner {
+        queue: VecDeque<(Vec<u8>, Complete<Vec<u8>>)>,
+        sender_count: usize,
+        task: Option<task::Task>,
+    }
+
+    pub struct Sender {
+        inner: Rc<RefCell<Inner>>,
+    }
+
+    impl Clone for Sender {
+        fn clone(&self) -> Sender {
+            self.inner.borrow_mut().sender_count += 1;
+            Sender { inner: self.inner.clone() }
+        }
+    }
+
+    impl Drop for Sender {
+        fn drop(&mut self) {
+            self.inner.borrow_mut().sender_count -= 1;
+        }
+    }
+
+    pub fn write_queue<W>(writer: W) -> (Sender, WriteQueue<W>)
+        where W: ::std::io::Write
+    {
+        let inner = Rc::new(RefCell::new(Inner {
+            queue: VecDeque::new(),
+            task: None,
+            sender_count: 1,
+        }));
+
+        let queue = WriteQueue {
+            inner: inner.clone(),
+            state: State::BetweenWrites(writer),
+        };
+
+        let sender = Sender { inner: inner };
+
+        (sender, queue)
+    }
+
+    impl Sender {
+        /// Enqueues a message to be written.
+        pub fn send(&mut self, message: Vec<u8>) -> Oneshot<Vec<u8>> {
+            let (complete, oneshot) = futures::oneshot();
+            self.inner.borrow_mut().queue.push_back((message, complete));
+
+            match self.inner.borrow_mut().task.take() {
+                Some(t) => t.unpark(),
+                None => (),
+            }
+
+            oneshot
+        }
+
+        /// Returns the number of messages queued to be written, not including any in-progress write.
+        pub fn len(&mut self) -> usize {
+            self.inner.borrow().queue.len()
+        }
+    }
+
+    enum IntermediateState<W> where W: ::std::io::Write {
+        WriteHeaderDone,
+        WriteDone(Vec<u8>, W),
+        StartWrite(Vec<u8>, Complete<Vec<u8>>),
+        Resolve,
+    }
+
+    impl <W> Future for WriteQueue<W> where W: ::std::io::Write {
+        type Item = W; // Resolves when all senders have been dropped and all messages written.
+        type Error = ::std::io::Error;
+
+        fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+            loop {
+                let next = match self.state {
+                    State::WritingHeader(ref mut write, ref buf, ref mut _complete) => {
+                        let n = try_nb!(write.write(&[buf.len() as u8]));
+                        match n {
+                            0 => unimplemented!(), // TODO return error premature EOF
+                            1 => IntermediateState::WriteHeaderDone,
+                            _ => unreachable!(),
+                        }
+                    }
+                    State::Writing(ref mut write, ref mut _complete) => {
+                        let (w, m) = try_ready!(Future::poll(write));
+                        IntermediateState::WriteDone(m, w)
+                    }
+                    State::BetweenWrites(ref mut _writer) => {
+                        let front = self.inner.borrow_mut().queue.pop_front();
+                        match front {
+                            Some((m, complete)) => {
+                                IntermediateState::StartWrite(m, complete)
+                            }
+                            None => {
+                                let count = self.inner.borrow().sender_count;
+                                if count == 0 {
+                                    IntermediateState::Resolve
+                                } else {
+                                    self.inner.borrow_mut().task = Some(task::park());
+                                    return Ok(Async::NotReady)
+                                }
+                            }
+                        }
+                    }
+                    State::Empty => unreachable!(),
+                };
+
+                match next {
+                    IntermediateState::WriteHeaderDone => {
+                        let new_state = match ::std::mem::replace(&mut self.state, State::Empty) {
+                            State::WritingHeader(writer, buf, complete) => {
+                                State::Writing(::tokio_core::io::write_all(writer, buf), complete)
+                            }
+                            _ => unreachable!(),
+                        };
+                        self.state = new_state;
+                    }
+                    IntermediateState::WriteDone(m, w) => {
+                        match ::std::mem::replace(&mut self.state, State::BetweenWrites(w)) {
+                            State::Writing(_, complete) => {
+                                complete.complete(m)
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    IntermediateState::StartWrite(m, c) => {
+                        let new_state = match ::std::mem::replace(&mut self.state, State::Empty) {
+                            State::BetweenWrites(w) => {
+                                State::WritingHeader(w, m, c)
+                            }
+                            _ => unreachable!(),
+                        };
+                        self.state = new_state;
+                    }
+                    IntermediateState::Resolve => {
+                        match ::std::mem::replace(&mut self.state, State::Empty) {
+                            State::BetweenWrites(w) => {
+                                return Ok(Async::Ready(w))
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
