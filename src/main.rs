@@ -10,7 +10,7 @@ extern crate tokio_core;
 use std::env;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use byteorder::{LittleEndian, ByteOrder};
 use slab::Slab;
@@ -79,14 +79,16 @@ pub fn main() {
     // Once we've got the TCP listener, inform that we have it
     println!("Listening on: {}", addr);
 
-    let subscribers: Slab<::write_queue::Sender, usize> = Slab::with_capacity(1024);
+    let subscribers: Rc<RefCell<Slab<::write_queue::Sender, usize>>> =
+        Rc::new(RefCell::new(Slab::with_capacity(1024)));
 
     let done = socket.incoming().for_each(move |(socket, _addr)| {
         // what's the spec?
         // first byte: 0 means publisher, 1 means subscriber.
 
+        let subscribers = subscribers.clone();
         let header = [0u8; 1];
-        let future = read_exact(socket, header).and_then(|(socket, header)| {
+        let future = read_exact(socket, header).and_then(move |(socket, header)| -> Box<Future<Item=(),Error=::std::io::Error>> {
             println!("OK {:?}", header);
             match header[0] {
                 0 => {
@@ -107,15 +109,22 @@ pub fn main() {
                             })
                         });
 
-                    // When this stream is done, I want the socket back.
-                    done
-
-                    // When done receiving message, write back the number received,
-                    // as a little-endian u64.
+                    Box::new(done)
                 }
                 1 => {
-                    //subscriber
-                    unimplemented!()
+                    // subscriber
+
+                    let (sender, queue) = ::write_queue::write_queue(socket);
+
+                    let idx = match subscribers.borrow_mut().insert(sender) {
+                        Ok(idx) => idx,
+                        Err(_) => unimplemented!(), // should grow the slab.
+                    };
+
+                    Box::new(queue.then(move |_| {
+                        subscribers.borrow_mut().remove(idx).unwrap();
+                        Ok(())
+                    }))
                 }
                 _ => {
                     // error
