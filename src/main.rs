@@ -99,8 +99,11 @@ pub fn main() {
                         .and_then(|(reader, writer)| {
                             ReadStream::new(reader).for_each(move |buf| {
                                 num_read1.set(num_read1.get() + 1);
-                                println!("buf {:?}", buf);
-                                // TODO send this off to the subscribers.
+                                for ref mut sender in subscribers.borrow_mut().iter_mut() {
+                                    if sender.len() < 5 {
+                                        drop(sender.send(buf.clone()));
+                                    }
+                                }
                                 Ok(())
                             }).and_then(move |()| {
                                 let mut word = [0u8; 8];
