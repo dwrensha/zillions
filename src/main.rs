@@ -1,4 +1,5 @@
 extern crate byteorder;
+extern crate slab;
 
 #[macro_use]
 extern crate futures;
@@ -12,6 +13,7 @@ use std::rc::Rc;
 use std::cell::Cell;
 
 use byteorder::{LittleEndian, ByteOrder};
+use slab::Slab;
 use futures::{Async, Poll, Future};
 use futures::stream::Stream;
 use tokio_core::io::{read_exact, write_all, Io};
@@ -77,6 +79,8 @@ pub fn main() {
     // Once we've got the TCP listener, inform that we have it
     println!("Listening on: {}", addr);
 
+    let subscribers: Slab<::write_queue::Sender, usize> = Slab::with_capacity(1024);
+
     let done = socket.incoming().for_each(move |(socket, _addr)| {
         // what's the spec?
         // first byte: 0 means publisher, 1 means subscriber.
@@ -130,7 +134,7 @@ pub fn main() {
     l.run(done).unwrap();
 }
 
-mod write_queue {
+pub mod write_queue {
     use std::collections::VecDeque;
     use std::rc::Rc;
     use std::cell::RefCell;
