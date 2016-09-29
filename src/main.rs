@@ -119,9 +119,13 @@ pub fn main() {
 
                     let (sender, queue) = ::write_queue::write_queue(socket);
 
+                    if !subscribers.borrow().has_available() {
+                        let len = subscribers.borrow().len();
+                        subscribers.borrow_mut().reserve_exact(len);
+                    }
                     let idx = match subscribers.borrow_mut().insert(sender) {
                         Ok(idx) => idx,
-                        Err(_) => unimplemented!(), // should grow the slab.
+                        Err(_) => unreachable!(),
                     };
 
                     Box::new(queue.then(move |_| {
