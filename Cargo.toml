@@ -3,12 +3,16 @@ name = "belt-rust-task"
 version = "0.1.0"
 authors = ["David Renshaw <david@sandstorm.io>"]
 
-[[bin]]
-name="pubsub"
-path="src/main.rs"
-
 [dependencies]
 futures = "0.1.1"
 tokio-core = "0.1"
 byteorder = "0.5.3"
 slab = "0.3"
+
+[[bin]]
+name="pubsub"
+path="src/main.rs"
+
+[[bin]]
+name="publisher"
+path="src/publisher.rs"

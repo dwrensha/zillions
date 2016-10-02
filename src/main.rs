@@ -50,6 +50,7 @@ impl <R> Stream for ReadStream<R> where R: ::std::io::Read {
                 if self.pos == frame_end as usize {
                     self.pos = 0;
                     let result = ::std::mem::replace(&mut self.buffer, Vec::new());
+                    self.frame_end = None;
                     return Ok(Async::Ready(Some(result)))
                 }
             } else {
@@ -89,7 +90,6 @@ pub fn main() {
         let subscribers = subscribers.clone();
         let header = [0u8; 1];
         let future = read_exact(socket, header).and_then(move |(socket, header)| -> Box<Future<Item=(),Error=::std::io::Error>> {
-            println!("OK {:?}", header);
             match header[0] {
                 0 => {
                     // publisher
