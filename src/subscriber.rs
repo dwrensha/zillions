@@ -10,6 +10,20 @@ pub fn main() {
 
     socket.write_all(&[1]).unwrap(); // subscribe
 
-    // TODO
+    let mut message = [0u8; 256];
+    let mut header = [0u8];
 
+    loop {
+        socket.read_exact(&mut header).unwrap();
+        let len = header[0] as usize;
+        socket.read_exact(&mut message[..len]).unwrap();
+        match ::std::str::from_utf8(&message[..len]) {
+            Ok(s) => {
+                println!("{}", s);
+            }
+            Err(e) => {
+                println!("[received non-utf8 data]");
+            }
+        }
+    }
 }
