@@ -1,6 +1,6 @@
 use std::env;
 use std::net::SocketAddr;
-use std::io::{Read, Write, BufRead};
+use std::io::{Read, Write};
 
 pub fn main() {
     let addr = env::args().nth(1).unwrap_or("127.0.0.1:8080".to_string());
@@ -14,14 +14,18 @@ pub fn main() {
     let mut header = [0u8];
 
     loop {
-        socket.read_exact(&mut header).unwrap();
+        if socket.read(&mut header).unwrap() == 0 {
+            // EOF
+            break;
+        }
+
         let len = header[0] as usize;
         socket.read_exact(&mut message[..len]).unwrap();
         match ::std::str::from_utf8(&message[..len]) {
             Ok(s) => {
                 println!("{}", s);
             }
-            Err(e) => {
+            Err(_) => {
                 println!("[received non-utf8 data]");
             }
         }
