@@ -14,10 +14,10 @@ pub fn main() {
 
     socket.write_all(&[0]).unwrap();
 
-    let mut message_count = 0;
+    let mut message_count = 0u64;
 
     let stdin = std::io::stdin();
-    let mut handle = stdin.lock();
+    let handle = stdin.lock();
     for line in handle.lines() {
         match line {
             Ok(l) => {
@@ -40,5 +40,5 @@ pub fn main() {
     socket.read_exact(&mut word).unwrap();
 
     let reply = <LittleEndian as ByteOrder>::read_u64(&word);
-    println!("reply = {}", reply);
+    println!("wrote {} messages. server claims to have read {} messages", message_count, reply);
 }
