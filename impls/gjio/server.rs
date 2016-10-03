@@ -81,7 +81,12 @@ fn handle_publisher(mut stream: SocketStream, messages_received: u64,
             let len = buf[0] as usize;
             let body = vec![0u8; len];
             stream.read(body, len).then(move |(buf, _)| {
-                // TODO send buf to subscribers
+                for ref mut write_queue in subscribers.borrow_mut().iter_mut() {
+                    if write_queue.len() < 5 {
+                        write_queue.send(buf.clone());
+                    }
+                }
+
                 handle_publisher(stream, messages_received + 1, subscribers)
             })
         }
