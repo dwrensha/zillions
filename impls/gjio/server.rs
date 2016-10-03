@@ -12,25 +12,24 @@ use gj::{EventLoop, Promise, TaskReaper, TaskSet};
 use gjio::{SocketStream, AsyncRead, AsyncWrite};
 
 struct WriteQueue {
-    task: Promise<Bomb, Error>,
+    task: Promise<(SocketStream, Bomb), Error>,
     len: Rc<Cell<usize>>,
-    stream: SocketStream,
 }
 
 impl WriteQueue {
-    fn new(stream: SocketStream) -> WriteQueue {
+    fn new() -> WriteQueue {
         WriteQueue {
             task: Promise::err(Error::new(ErrorKind::Other, "uninitialized")),
             len: Rc::new(Cell::new(0)),
-            stream: stream,
         }
     }
 
-    fn init(&mut self, idx: usize, subscribers: &Rc<RefCell<Slab<WriteQueue>>>) {
-        self.task = Promise::ok(Bomb {
+    fn init(&mut self, idx: usize, subscribers: &Rc<RefCell<Slab<WriteQueue>>>,
+            stream: SocketStream ) {
+        self.task = Promise::ok((stream, Bomb {
             subscribers: Rc::downgrade(subscribers),
             idx: idx
-        });
+        }));
     }
 
     fn len(&self) -> usize {
@@ -38,7 +37,18 @@ impl WriteQueue {
     }
 
     fn send(&mut self, message: Vec<u8>) {
-        unimplemented!()
+        let task = ::std::mem::replace(&mut self.task, Promise::err(Error::new(ErrorKind::Other, "uninitialized")));
+        self.len.set(self.len.get() + 1);
+        let len = self.len.clone();
+        self.task = task.then(move |(mut stream, bomb)| {
+            let header = vec![message.len() as u8];
+            stream.write(header).then(move |_| {
+                stream.write(message).then(move |_| {
+                    len.set(len.get() - 1);
+                    Promise::ok((stream, bomb))
+                })
+            })
+        });
     }
 }
 
@@ -90,7 +100,7 @@ fn handle_connection(mut stream: SocketStream,
             1 => {
                 // subscriber
 
-                let write_queue = WriteQueue::new(stream);
+                let write_queue = WriteQueue::new();
 
                 if !subscribers.borrow().has_available() {
                     let len = subscribers.borrow().len();
@@ -102,7 +112,7 @@ fn handle_connection(mut stream: SocketStream,
                 };
 
                 match subscribers.borrow_mut().get_mut(idx) {
-                    Some(ref mut q) => q.init(idx, &subscribers),
+                    Some(ref mut q) => q.init(idx, &subscribers, stream),
                     None => unreachable!(),
                 }
 
