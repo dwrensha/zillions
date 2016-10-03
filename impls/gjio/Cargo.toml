@@ -1,0 +1,14 @@
+[package]
+name = "gjio-zillions"
+version = "0.1.0"
+authors = ["David Renshaw <david@sandstorm.io>"]
+
+[dependencies]
+gj = "0.2"
+gjio = "0.1"
+byteorder = "0.5.3"
+slab = "0.3"
+
+[[bin]]
+name="server"
+path="server.rs"
