@@ -1,15 +1,14 @@
 [package]
-name = "zillions"
+name = "tokio-core-zillions"
 version = "0.1.0"
 authors = ["David Renshaw <david@sandstorm.io>"]
 
 [dependencies]
+futures = "0.1.1"
+tokio-core = "0.1"
 byteorder = "0.5.3"
+slab = "0.3"
 
 [[bin]]
-name="publisher"
-path="src/publisher.rs"
-
-[[bin]]
-name="subscriber"
-path="src/subscriber.rs"
+name="server"
+path="server.rs"
