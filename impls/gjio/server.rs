@@ -4,7 +4,7 @@ extern crate byteorder;
 extern crate slab;
 
 use std::io::{Error, ErrorKind};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::cell::{Cell, RefCell};
 use byteorder::{LittleEndian, ByteOrder};
 use slab::Slab;
@@ -12,8 +12,52 @@ use gj::{EventLoop, Promise, TaskReaper, TaskSet};
 use gjio::{SocketStream, AsyncRead, AsyncWrite};
 
 struct WriteQueue {
-    // TODO
+    task: Promise<Bomb, Error>,
+    len: Rc<Cell<usize>>,
+    stream: SocketStream,
 }
+
+impl WriteQueue {
+    fn new(stream: SocketStream) -> WriteQueue {
+        WriteQueue {
+            task: Promise::err(Error::new(ErrorKind::Other, "uninitialized")),
+            len: Rc::new(Cell::new(0)),
+            stream: stream,
+        }
+    }
+
+    fn init(&mut self, idx: usize, subscribers: &Rc<RefCell<Slab<WriteQueue>>>) {
+        self.task = Promise::ok(Bomb {
+            subscribers: Rc::downgrade(subscribers),
+            idx: idx
+        });
+    }
+
+    fn len(&self) -> usize {
+        self.len.get()
+    }
+
+    fn send(&mut self, message: Vec<u8>) {
+        unimplemented!()
+    }
+}
+
+struct Bomb {
+    subscribers: Weak<RefCell<Slab<WriteQueue>>>,
+    idx: usize,
+}
+
+impl Drop for Bomb {
+    fn drop(&mut self) {
+        match self.subscribers.upgrade() {
+            Some(s) => {
+                s.borrow_mut().remove(self.idx).unwrap();
+            }
+            None => (),
+        }
+    }
+}
+
 
 fn handle_publisher(mut stream: SocketStream, messages_received: u64,
                     subscribers: Rc<RefCell<Slab<WriteQueue>>>) -> Promise<(), Error> {
@@ -46,7 +90,7 @@ fn handle_connection(mut stream: SocketStream,
             1 => {
                 // subscriber
 
-                let write_queue = WriteQueue {};
+                let write_queue = WriteQueue::new(stream);
 
                 if !subscribers.borrow().has_available() {
                     let len = subscribers.borrow().len();
@@ -57,12 +101,13 @@ fn handle_connection(mut stream: SocketStream,
                     Err(_) => unreachable!(),
                 };
 
-                unimplemented!()
+                match subscribers.borrow_mut().get_mut(idx) {
+                    Some(ref mut q) => q.init(idx, &subscribers),
+                    None => unreachable!(),
+                }
 
-//                handle_subscriber(stream).map_else(move |_| {
-//                    subscribers.borrow_mut().remove(idx).unwrap();
-//                    Ok(())
-//                })
+                // TODO: wait for EOF on read half?
+                Promise::ok(())
             }
             _ => {
                 Promise::err(Error::new(ErrorKind::Other, "expected 0 or 1"))
