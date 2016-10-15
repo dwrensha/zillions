@@ -2,7 +2,7 @@
 
 A toy server spec and some sample implementations.
 
-To help you choose among the many many ways to write code to perform concurrent I/O.
+To help you choose among the many ways to write code to perform concurrent I/O.
 
 ## specification
 
