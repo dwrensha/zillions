@@ -13,3 +13,7 @@ path="src/publisher.rs"
 [[bin]]
 name="subscriber"
 path="src/subscriber.rs"
+
+[[bin]]
+name="benchmark"
+path="src/benchmark.rs"
