@@ -13,36 +13,36 @@ use futures::stream::Stream;
 
 
 struct Knot<F, S, E>
-    where F: Fn(S) -> Box<Future<Item=S, Error=E>>
+    where F: Fn(S) -> Box<Future<Item=(S, bool), Error=E>>
 {
     f: F,
-    in_progress: Box<Future<Item=S, Error=E>>,
-
-    // See https://github.com/rust-lang/rust/issues/37249
-    marker: ::std::marker::PhantomData<Fn(S)>,
+    in_progress: Box<Future<Item=(S, bool), Error=E>>,
 }
 
 fn tie_knot<F, S, E>(f: F, initial_state: S) -> Knot<F, S, E>
-    where F: Fn(S) -> Box<Future<Item=S, Error=E>>
+    where F: Fn(S) -> Box<Future<Item=(S, bool), Error=E>>
 {
     let in_progress = f(initial_state);
     Knot {
         f: f,
         in_progress: in_progress,
-        marker: ::std::marker::PhantomData,
     }
 }
 
 impl <F, S, E> Future for Knot<F, S, E>
-    where F: Fn(S) -> Box<Future<Item=S, Error=E>>
+    where F: Fn(S) -> Box<Future<Item=(S, bool), Error=E>>
 {
-    type Item = ();
+    type Item = S;
     type Error = E;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let s = try_ready!(self.in_progress.poll());
-        self.in_progress = (self.f)(s);
-        Ok(Async::NotReady)
+        let (s, more) = try_ready!(self.in_progress.poll());
+        if more {
+            self.in_progress = (self.f)(s);
+            Ok(Async::NotReady)
+        } else {
+            Ok(Async::Ready(s))
+        }
     }
 }
 
