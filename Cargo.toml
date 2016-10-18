@@ -6,6 +6,9 @@ authors = ["David Renshaw <david@sandstorm.io>"]
 [dependencies]
 byteorder = "0.5.3"
 clap = "2.14"
+futures = "0.1.1"
+futures-cpupool = "0.1"
+tokio-core = "0.1"
 
 [[bin]]
 name="publisher"
