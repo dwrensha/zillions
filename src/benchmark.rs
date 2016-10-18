@@ -16,4 +16,9 @@ pub fn main() {
 
     println!("exectuable: {}", executable);
 
+    let addr = "127.0.0.1:8080";
+    let child = ::std::process::Command::new(executable)
+        .arg(addr)
+        .spawn();
+
 }
