@@ -1,17 +1,19 @@
 extern crate byteorder;
-
-fn parse_args() -> String {
-    let args: Vec<String> = ::std::env::args().collect();
-    if args.len() == 2 {
-        args[1].to_string()
-    } else {
-        println!("usage: {} <EXECUTABLE>", args[0]);
-        ::std::process::exit(1);
-    }
-
-}
+extern crate clap;
 
 pub fn main() {
-    let executable = parse_args();
-    ::std::process::Command::new(executable);
+    use clap::{App, Arg};
+    let matches = App::new("Zillions benchmarker")
+        .version("0.0.0")
+        .about("Does awesome things")
+        .arg(Arg::with_name("EXECUTABLE")
+             .required(true)
+             .index(1)
+             .help("The executable to benchmark"))
+        .get_matches();
+
+    let executable = matches.value_of("EXECUTABLE").unwrap();
+
+    println!("exectuable: {}", executable);
+
 }
