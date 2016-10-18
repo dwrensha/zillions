@@ -13,20 +13,19 @@ use futures::stream::Stream;
 
 
 struct Knot<F, S, E>
-    where F: Fn(S, F) -> Box<Future<Item=(), Error=E>> + Clone
+    where F: Fn(S) -> Box<Future<Item=S, Error=E>>
 {
     f: F,
-    in_progress: Box<Future<Item=(), Error=E>>,
+    in_progress: Box<Future<Item=S, Error=E>>,
 
     // See https://github.com/rust-lang/rust/issues/37249
-    marker: ::std::marker::PhantomData<Fn(S, F)>,
+    marker: ::std::marker::PhantomData<Fn(S)>,
 }
 
-
 fn tie_knot<F, S, E>(f: F, initial_state: S) -> Knot<F, S, E>
-    where F: Fn(S, F) -> Box<Future<Item=(), Error=E>> + Clone
+    where F: Fn(S) -> Box<Future<Item=S, Error=E>>
 {
-    let in_progress = f(initial_state, f.clone());
+    let in_progress = f(initial_state);
     Knot {
         f: f,
         in_progress: in_progress,
@@ -35,13 +34,15 @@ fn tie_knot<F, S, E>(f: F, initial_state: S) -> Knot<F, S, E>
 }
 
 impl <F, S, E> Future for Knot<F, S, E>
-    where F: Fn(S, F) -> Box<Future<Item=(), Error=E>> + Clone
+    where F: Fn(S) -> Box<Future<Item=S, Error=E>>
 {
     type Item = ();
-    type Error = ::std::io::Error;
+    type Error = E;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        unimplemented!()
+        let s = try_ready!(self.in_progress.poll());
+        self.in_progress = (self.f)(s);
+        Ok(Async::NotReady)
     }
 }
 
