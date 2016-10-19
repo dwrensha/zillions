@@ -12,15 +12,17 @@ use futures::{Async, Poll, Future};
 use futures::stream::Stream;
 
 
-struct Knot<F, S, E>
-    where F: Fn(S) -> Box<Future<Item=(S, bool), Error=E>>
+struct Knot<F, S, T, E>
+    where F: Fn(S) -> T,
+          T: Future<Item=(S, bool), Error=E>
 {
     f: F,
-    in_progress: Box<Future<Item=(S, bool), Error=E>>,
+    in_progress: T,
 }
 
-fn tie_knot<F, S, E>(f: F, initial_state: S) -> Knot<F, S, E>
-    where F: Fn(S) -> Box<Future<Item=(S, bool), Error=E>>
+fn tie_knot<F, S, T, E>(f: F, initial_state: S) -> Knot<F, S, T, E>
+    where F: Fn(S) -> T,
+          T: Future<Item=(S, bool), Error=E>,
 {
     let in_progress = f(initial_state);
     Knot {
@@ -29,8 +31,9 @@ fn tie_knot<F, S, E>(f: F, initial_state: S) -> Knot<F, S, E>
     }
 }
 
-impl <F, S, E> Future for Knot<F, S, E>
-    where F: Fn(S) -> Box<Future<Item=(S, bool), Error=E>>
+impl <F, S, T, E> Future for Knot<F, S, T, E>
+    where F: Fn(S) -> T,
+          T: Future<Item=(S, bool), Error=E>
 {
     type Item = S;
     type Error = E;
@@ -46,17 +49,17 @@ impl <F, S, E> Future for Knot<F, S, E>
     }
 }
 
-struct ReadStream<R> where R: ::std::io::Read {
-    reader: R,
+struct Reading<R> where R: ::std::io::Read {
+    reader: Option<R>,
     buffer: Vec<u8>,
     pos: usize,
     frame_end: Option<u8>,
 }
 
-impl <R> ReadStream<R> where R: ::std::io::Read {
-    fn new(reader: R) -> ReadStream<R> {
-        ReadStream {
-            reader: reader,
+impl <R> Reading<R> where R: ::std::io::Read {
+    fn new(reader: R) -> Reading<R> {
+        Reading {
+            reader: Some(reader),
             buffer: Vec::new(),
             pos: 0,
             frame_end: None,
@@ -64,26 +67,26 @@ impl <R> ReadStream<R> where R: ::std::io::Read {
     }
 }
 
-impl <R> Stream for ReadStream<R> where R: ::std::io::Read {
-    type Item = Vec<u8>;
+impl <R> Future for Reading<R> where R: ::std::io::Read {
+    type Item = (Option<Vec<u8>>, R);
     type Error = ::std::io::Error;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             if let Some(frame_end) = self.frame_end {
-                let n = try_nb!(self.reader.read(&mut self.buffer[self.pos..frame_end as usize]));
+                let n = try_nb!(self.reader.as_mut().unwrap().read(&mut self.buffer[self.pos..frame_end as usize]));
                 self.pos += n;
                 if self.pos == frame_end as usize {
                     self.pos = 0;
                     let result = ::std::mem::replace(&mut self.buffer, Vec::new());
                     self.frame_end = None;
-                    return Ok(Async::Ready(Some(result)))
+                    return Ok(Async::Ready((Some(result), self.reader.take().unwrap())))
                 }
             } else {
                 let mut buf = [0u8];
-                let n = try_nb!(self.reader.read(&mut buf));
+                let n = try_nb!(self.reader.as_mut().unwrap().read(&mut buf));
                 if n == 0 { // EOF
-                    return Ok(Async::Ready(None))
+                    return Ok(Async::Ready((None, self.reader.take().unwrap())))
                 }
 
                 self.frame_end = Some(buf[0]);
@@ -93,6 +96,10 @@ impl <R> Stream for ReadStream<R> where R: ::std::io::Read {
     }
 }
 
+pub struct Writing<W> {
+    writer: Option<W>,
+    // TODO
+}
 
 
 pub fn main() {
