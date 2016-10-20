@@ -83,7 +83,7 @@ struct Knot<F, S, T, E>
     in_progress: T,
 }
 
-fn tie_knot<F, S, T, E>(f: F, initial_state: S) -> Knot<F, S, T, E>
+fn tie_knot<F, S, T, E>(initial_state: S, f: F) -> Knot<F, S, T, E>
     where F: Fn(S) -> T,
           T: Future<Item=(S, bool), Error=E>,
 {
@@ -196,7 +196,11 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     }
     Box::new(publisher.join(::all::All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
         println!("connected");
-        Ok(())
+
+        tie_knot((publisher, subscribers, 10), |(publisher, subscribers, n)| {
+            println!("looping {}", n);
+            futures::finished(((publisher, subscribers, n - 1), n > 0))
+        }).map(|_| ())
     }))
 }
 
