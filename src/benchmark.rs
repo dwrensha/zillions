@@ -199,20 +199,23 @@ impl <W> Future for Writing<W> where W: ::std::io::Write {
 
 fn new_task(handle: &::tokio_core::reactor::Handle,
             addr: &::std::net::SocketAddr) -> Box<Future<Item=(), Error=::std::io::Error> + Send> {
-    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
+    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle).and_then(|stream| {
+        tokio_core::io::write_all(stream, [0]).map(|(a,_)| a)
+    });
+
     let mut subscribers = Vec::new();
     for _ in 0..3 {
-        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle));
+        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(|stream| {
+            tokio_core::io::write_all(stream, [1]).map(|(a,_)| a)
+        }));
     }
+
     Box::new(publisher.join(::all::All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
         println!("connected");
 
-// TODO
-//        publisher.write_all([0]).join(::all::All::new(subscibers.into_iter()))
-
         tie_knot((publisher, subscribers, 10u32), |(publisher, subscribers, n)| {
+            println!("looping {}", n);
             Writing::new(publisher, vec![n as u8, 1,2,3]).and_then(move |publisher| {
-                println!("looping {}", n);
                 futures::finished(((publisher, subscribers, n - 1), n > 0))
             })
         }).map(|_| ())
