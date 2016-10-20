@@ -9,8 +9,6 @@ extern crate futures_cpupool;
 extern crate tokio_core;
 
 use futures::{Async, Poll, Future};
-use futures::stream::Stream;
-
 
 mod all {
     use futures::{Async, Poll, Future};
@@ -183,7 +181,18 @@ impl <W> Future for Writing<W> where W: ::std::io::Write {
     type Error = ::std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        unimplemented!()
+        loop {
+            if !self.wrote_header {
+                let buf = [self.message.len() as u8];
+                try_nb!(self.writer.as_mut().unwrap().write(&buf));
+            } else {
+                let n = try_nb!(self.writer.as_mut().unwrap().write(&self.message[self.pos..]));
+                self.pos += n;
+                if self.pos >= self.message.len() {
+                    return Ok(Async::Ready(self.writer.take().unwrap()))
+                }
+            }
+        }
     }
 }
 
@@ -198,9 +207,14 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     Box::new(publisher.join(::all::All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
         println!("connected");
 
-        tie_knot((publisher, subscribers, 10), |(publisher, subscribers, n)| {
-            println!("looping {}", n);
-            futures::finished(((publisher, subscribers, n - 1), n > 0))
+// TODO
+//        publisher.write_all([0]).join(::all::All::new(subscibers.into_iter()))
+
+        tie_knot((publisher, subscribers, 10u32), |(publisher, subscribers, n)| {
+            Writing::new(publisher, vec![n as u8, 1,2,3]).and_then(move |publisher| {
+                println!("looping {}", n);
+                futures::finished(((publisher, subscribers, n - 1), n > 0))
+            })
         }).map(|_| ())
     }))
 }
