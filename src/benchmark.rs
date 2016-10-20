@@ -12,6 +12,60 @@ use futures::{Async, Poll, Future};
 use futures::stream::Stream;
 
 
+mod all {
+    use futures::{Async, Poll, Future};
+    enum ElemState<T> where T: Future {
+        Pending(T),
+        Done(T::Item),
+    }
+
+    struct All<T> where T: Future {
+        elems: Vec<ElemState<T>>,
+    }
+
+
+    impl <T> Future for All<T> where T: Future {
+        type Item = Vec<T::Item>;
+        type Error = T::Error;
+
+        fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+            let mut all_done = true;
+
+            for idx in 0 .. self.elems.len() {
+                let done_val = match &mut self.elems[idx] {
+                    &mut ElemState::Pending(ref mut t) => {
+                        match t.poll() {
+                            Ok(Async::Ready(t)) => t,
+                            Ok(Async::NotReady) => {
+                                all_done = false;
+                                continue
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    &mut ElemState::Done(ref mut _v) => continue,
+                };
+
+                self.elems[idx] = ElemState::Done(done_val);
+            }
+
+            if all_done {
+                let mut result = Vec::new();
+                let elems = ::std::mem::replace(&mut self.elems, Vec::new());
+                for e in elems.into_iter() {
+                    match e {
+                        ElemState::Done(t) => result.push(t),
+                        _ => unreachable!(),
+                    }
+                }
+                Ok(Async::Ready(result))
+            } else {
+                Ok(Async::NotReady)
+            }
+        }
+    }
+}
+
 struct Knot<F, S, T, E>
     where F: Fn(S) -> T,
           T: Future<Item=(S, bool), Error=E>
@@ -96,10 +150,35 @@ impl <R> Future for Reading<R> where R: ::std::io::Read {
     }
 }
 
-pub struct Writing<W> {
+pub struct Writing<W> where W: ::std::io::Write {
     writer: Option<W>,
-    // TODO
+    message: Vec<u8>,
+    pos: usize,
+    wrote_header: bool,
 }
+
+impl <W> Writing<W> where W: ::std::io::Write {
+    fn new(writer: W, message: Vec<u8>) -> Writing<W> {
+        Writing {
+            writer: Some(writer),
+            message: message,
+            pos: 0,
+            wrote_header: false,
+        }
+    }
+}
+
+impl <W> Future for Writing<W> where W: ::std::io::Write {
+    type Item = W;
+    type Error = ::std::io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        unimplemented!()
+    }
+}
+
+
+
 
 
 pub fn main() {
