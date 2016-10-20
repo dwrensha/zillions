@@ -19,10 +19,19 @@ mod all {
         Done(T::Item),
     }
 
-    struct All<T> where T: Future {
+    pub struct All<T> where T: Future {
         elems: Vec<ElemState<T>>,
     }
 
+    impl <T> All<T> where T: Future {
+        pub fn new<I>(futures: I) -> All<T> where I: Iterator<Item=T> {
+            let mut result = All { elems: Vec::new() };
+            for f in futures {
+                result.elems.push(ElemState::Pending(f))
+            }
+            result
+        }
+    }
 
     impl <T> Future for All<T> where T: Future {
         type Item = Vec<T::Item>;
@@ -178,10 +187,20 @@ impl <W> Future for Writing<W> where W: ::std::io::Write {
 }
 
 
+fn new_task(handle: &::tokio_core::reactor::Handle,
+            addr: &::std::net::SocketAddr) -> Box<Future<Item=(), Error=::std::io::Error> + Send> {
+    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
+    let mut subscribers = Vec::new();
+    for _ in 0..3 {
+        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle));
+    }
+    Box::new(publisher.join(::all::All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
+        println!("connected");
+        Ok(())
+    }))
+}
 
-
-
-pub fn main() {
+pub fn run() -> Result<(), ::std::io::Error> {
     use clap::{App, Arg};
     let matches = App::new("Zillions benchmarker")
         .version("0.0.0")
@@ -196,9 +215,34 @@ pub fn main() {
 
     println!("exectuable: {}", executable);
 
-    let addr = "127.0.0.1:8080";
-    let child = ::std::process::Command::new(executable)
-        .arg(addr)
+    let addr_str = "127.0.0.1:8080";
+    let addr = match addr_str.parse::<::std::net::SocketAddr>() {
+        Ok(a) => a,
+        Err(e) => {
+            panic!("failed to parse socket address {}", e);
+        }
+    };
+
+    let _child = ::std::process::Command::new(executable)
+        .arg(addr_str)
         .spawn();
 
+
+
+    // start tokio reactor
+    let mut core = try!(::tokio_core::reactor::Core::new());
+
+    let handle = core.handle();
+
+    let pool = ::futures_cpupool::CpuPool::new_num_cpus();
+
+    let f = pool.spawn(new_task(&handle, &addr));
+
+    try!(core.run(f));
+
+    Ok(())
+}
+
+pub fn main() {
+    run().expect("top level error");
 }
