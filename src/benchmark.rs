@@ -102,12 +102,13 @@ impl <F, S, T, E> Future for Knot<F, S, T, E>
     type Error = E;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (s, more) = try_ready!(self.in_progress.poll());
-        if more {
-            self.in_progress = (self.f)(s);
-            Ok(Async::NotReady)
-        } else {
-            Ok(Async::Ready(s))
+        loop {
+            let (s, more) = try_ready!(self.in_progress.poll());
+            if more {
+                self.in_progress = (self.f)(s);
+            } else {
+                return Ok(Async::Ready(s))
+            }
         }
     }
 }
