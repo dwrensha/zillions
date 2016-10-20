@@ -185,6 +185,7 @@ impl <W> Future for Writing<W> where W: ::std::io::Write {
             if !self.wrote_header {
                 let buf = [self.message.len() as u8];
                 try_nb!(self.writer.as_mut().unwrap().write(&buf));
+                self.wrote_header = true;
             } else {
                 let n = try_nb!(self.writer.as_mut().unwrap().write(&self.message[self.pos..]));
                 self.pos += n;
@@ -213,7 +214,7 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     Box::new(publisher.join(::all::All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
         println!("connected");
 
-        tie_knot((publisher, subscribers, 10u32), |(publisher, subscribers, n)| {
+        tie_knot((publisher, subscribers, 10i32), |(publisher, subscribers, n)| {
             println!("looping {}", n);
             Writing::new(publisher, vec![n as u8, 1,2,3]).and_then(move |publisher| {
                 futures::finished(((publisher, subscribers, n - 1), n > 0))
@@ -247,9 +248,9 @@ pub fn run() -> Result<(), ::std::io::Error> {
 
     let _child = ::std::process::Command::new(executable)
         .arg(addr_str)
+        .stdout(::std::process::Stdio::inherit())
+        .stderr(::std::process::Stdio::inherit())
         .spawn();
-
-
 
     // start tokio reactor
     let mut core = try!(::tokio_core::reactor::Core::new());
