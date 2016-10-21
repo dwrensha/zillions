@@ -11,12 +11,8 @@ futures-cpupool = "0.1"
 tokio-core = "0.1"
 
 [[bin]]
-name="publisher"
-path="src/publisher.rs"
-
-[[bin]]
-name="subscriber"
-path="src/subscriber.rs"
+name="commandline-client"
+path="src/commandline-client.rs"
 
 [[bin]]
 name="benchmark"

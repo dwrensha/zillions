@@ -93,42 +93,28 @@ fn handle_publisher(mut stream: SocketStream, messages_received: u64,
     })
 }
 
-fn handle_connection(mut stream: SocketStream,
+fn handle_connection(stream: SocketStream,
                      subscribers: Rc<RefCell<Slab<WriteQueue>>>)
                      -> Promise<(), Error> {
-    stream.read(vec![0], 1).then(move |(buf, _)| {
-        match buf[0] {
-            0 => {
-                // publisher
-                handle_publisher(stream, 0, subscribers)
-            }
-            1 => {
-                // subscriber
 
-                let write_queue = WriteQueue::new();
+    let read_stream = stream.clone();
 
-                if !subscribers.borrow().has_available() {
-                    let len = subscribers.borrow().len();
-                    subscribers.borrow_mut().reserve_exact(len);
-                }
-                let idx = match subscribers.borrow_mut().insert(write_queue) {
-                    Ok(idx) => idx,
-                    Err(_) => unreachable!(),
-                };
+    let write_queue = WriteQueue::new();
+    if !subscribers.borrow().has_available() {
+        let len = subscribers.borrow().len();
+        subscribers.borrow_mut().reserve_exact(len);
+    }
+    let idx = match subscribers.borrow_mut().insert(write_queue) {
+        Ok(idx) => idx,
+        Err(_) => unreachable!(),
+    };
 
-                match subscribers.borrow_mut().get_mut(idx) {
-                    Some(ref mut q) => q.init(idx, &subscribers, stream),
-                    None => unreachable!(),
-                }
+    match subscribers.borrow_mut().get_mut(idx) {
+        Some(ref mut q) => q.init(idx, &subscribers, stream),
+        None => unreachable!(),
+    }
 
-                // TODO: wait for EOF on read half?
-                Promise::ok(())
-            }
-            _ => {
-                Promise::err(Error::new(ErrorKind::Other, "expected 0 or 1"))
-            }
-        }
-    })
+    handle_publisher(read_stream, 0, subscribers)
 }
 
 fn accept_loop(listener: gjio::SocketListener,
