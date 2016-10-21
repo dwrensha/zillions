@@ -262,7 +262,6 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
             <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
             Writing::new(socket, buf).and_then(move |socket| {
                 read_until_message_with_prefix(socket, buf).map(|(socket, _message)| {
-                    println!("got message");
                     socket
                 })
             })
@@ -270,8 +269,6 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     }
 
     Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
-        println!("connected");
-
         tie_knot((publisher, subscribers, 10i32), |(publisher, subscribers, n)| {
             println!("looping {}", n);
             Writing::new(publisher, vec![n as u8, 1,2,3]).and_then(move |publisher| {
@@ -334,16 +331,25 @@ pub fn run() -> Result<(), ::std::io::Error> {
         }
     };
 
-    let _child = ChildProcess::new(try!(::std::process::Command::new(executable)
+    let mut child = try!(::std::process::Command::new(executable)
         .arg(addr_str)
-        .stdout(::std::process::Stdio::inherit())
+        .stdout(::std::process::Stdio::piped())
         .stderr(::std::process::Stdio::inherit())
-        .spawn()));
+        .spawn());
 
+    let mut child_stdout = ::std::io::BufReader::new(child.stdout.take().unwrap());
+    let _wrapped_child = ChildProcess::new(child);
 
-    // XXX
-    ::std::thread::sleep(::std::time::Duration::from_millis(200));
+    let mut first_line = String::new();
+    try!(::std::io::BufRead::read_line(&mut child_stdout, &mut first_line));
 
+    if !first_line.starts_with("listening on") {
+        return Err(::std::io::Error::new(
+            ::std::io::ErrorKind::Other,
+            format!(
+                "expected first line from server to start with 'listening on ', but got {}",
+                first_line)))
+    }
 
     // start tokio reactor
     let mut core = try!(::tokio_core::reactor::Core::new());
