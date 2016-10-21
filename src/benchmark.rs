@@ -222,6 +222,30 @@ impl ConnectionIdSource {
     }
 }
 
+fn read_until_message_with_prefix<R, B>(
+    reader: R,
+    prefix: B)
+    -> Box<Future<Item=(R, Vec<u8>), Error=::std::io::Error>>
+    where R: ::std::io::Read + 'static + Send,
+          B: AsRef<[u8]> + 'static + Send,
+{
+    Box::new(tie_knot((reader, prefix, Vec::new()), move |(reader, prefix, _)| {
+        Reading::new(reader).and_then(move |(reader, message)| {
+            match message {
+                Some(message) => {
+                    let len = prefix.as_ref().len();
+                    let more = &message[0..len] != prefix.as_ref();
+                    Ok(((reader, prefix, message), more))
+                }
+                None => {
+                    Err(::std::io::Error::new(
+                        ::std::io::ErrorKind::UnexpectedEof, "premature EOF"))
+                }
+            }
+        })
+    }).map(|(reader, _, message)| (reader, message)))
+}
+
 fn new_task(handle: &::tokio_core::reactor::Handle,
             addr: &::std::net::SocketAddr,
             connection_id_source: ConnectionIdSource)
@@ -230,12 +254,19 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     use all::All;
 
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
-    let publisher_id = connection_id_source.next();
+    let _publisher_id = connection_id_source.next();
 
     let mut subscribers = Vec::new();
     for _ in 0..1 {
-        let _subscriber_id = connection_id_source.next();
-        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle));//.and_then(|socket| {
+        let subscriber_id = connection_id_source.next();
+        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
+            let mut buf = [0; 8];
+            <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
+            Ok(socket)
+//            read_until_message_with_prefix(socket, buf).map(|(socket, _message)| {
+//                socket
+//            })
+        }))
     }
 
     Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
