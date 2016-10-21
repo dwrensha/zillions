@@ -32,8 +32,6 @@ fn run() -> Result<(), ::std::io::Error> {
         }
     });
 
-    socket.write_all(&[0]).unwrap();
-
     let stdin = std::io::stdin();
     let handle = stdin.lock();
     for line in handle.lines() {

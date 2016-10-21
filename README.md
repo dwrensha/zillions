@@ -1,14 +1,15 @@
 # Zillions
 
-A toy chat server spec and some sample implementations.
-
-To help you choose among the many ways to write code to perform concurrent I/O.
+A toy chat server spec and some sample implementations,
+to you choose among the many ways to write code to perform concurrent I/O.
 
 ## specification
 
-The server is an executable with a single command-line argument,
-which is an IP address to listen on.
+The server is an executable with a single command-line argument indicating the IP address to listen on.
 The server runs forever, accepting and handling connections arriving on that address.
+
+When the server is ready to receive connections, it prints a single line to stdout, of the form
+"listening on [address]".
 
 The purpose of the server is to forward messages to all connected clients.
 There can be any number of connected clients active at a time.
