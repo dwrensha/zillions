@@ -1,12 +1,10 @@
 extern crate gj;
 extern crate gjio;
-extern crate byteorder;
 extern crate slab;
 
 use std::io::{Error, ErrorKind};
 use std::rc::{Rc, Weak};
 use std::cell::{Cell, RefCell};
-use byteorder::{LittleEndian, ByteOrder};
 use slab::Slab;
 use gj::{EventLoop, Promise, TaskReaper, TaskSet};
 use gjio::{SocketStream, AsyncRead, AsyncWrite};
@@ -74,9 +72,7 @@ fn handle_publisher(mut stream: SocketStream, messages_received: u64,
     stream.try_read(vec![0], 1).then(move |(buf, n)| {
         if n == 0 {
             // EOF
-            let mut word = vec![0u8; 8];
-            <LittleEndian as ByteOrder>::write_u64(&mut word, messages_received);
-            stream.write(word).map(|_| Ok(()))
+            Promise::ok(())
         } else {
             let len = buf[0] as usize;
             let body = vec![0u8; len];
