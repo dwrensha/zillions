@@ -76,7 +76,7 @@ pub fn main() {
     let socket = TcpListener::bind(&addr, &handle).unwrap();
 
     // Once we've got the TCP listener, inform that we have it
-    println!("Listening on: {}", addr);
+    println!("listening on {}", addr);
 
     let subscribers: Rc<RefCell<Slab<::write_queue::Sender, usize>>> =
         Rc::new(RefCell::new(Slab::with_capacity(1024)));

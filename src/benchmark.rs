@@ -139,7 +139,6 @@ impl <R> Future for Reading<R> where R: ::std::io::Read {
     type Error = ::std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        println!("poll reading");
         loop {
             if let Some(frame_end) = self.frame_end {
                 let n = try_nb!(self.reader.as_mut().unwrap().read(&mut self.buffer[self.pos..frame_end as usize]));
@@ -156,7 +155,6 @@ impl <R> Future for Reading<R> where R: ::std::io::Read {
                 if n == 0 { // EOF
                     return Ok(Async::Ready((self.reader.take().unwrap(), None)))
                 }
-                println!("got length: {}", buf[0]);
                 self.frame_end = Some(buf[0]);
                 self.buffer = vec![0; buf[0] as usize];
             }

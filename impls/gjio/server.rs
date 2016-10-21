@@ -138,19 +138,22 @@ pub fn main() {
         return;
     }
 
-    EventLoop::top_level(move |wait_scope| -> Result<(), ::std::io::Error> {
-        use std::net::ToSocketAddrs;
+    EventLoop::top_level(move |wait_scope| -> Result<(), Box<::std::error::Error>> {
         let mut event_port = try!(gjio::EventPort::new());
         let network = event_port.get_network();
-        let addr = try!(args[1].to_socket_addrs()).next().expect("could not parse address");
+        let addr_str = &args[1];
+        let addr = try!(addr_str.parse::<::std::net::SocketAddr>());
         let mut address = network.get_tcp_address(addr);
         let listener = try!(address.listen());
+        println!("listening on {}", addr_str);
+
         let reaper = Box::new(Reaper);
 
         let subscribers: Rc<RefCell<Slab<WriteQueue>>> =
             Rc::new(RefCell::new(Slab::with_capacity(1024)));
 
-        accept_loop(listener, TaskSet::new(reaper), subscribers).wait(wait_scope, &mut event_port)
+        try!(accept_loop(listener, TaskSet::new(reaper), subscribers).wait(wait_scope, &mut event_port));
+        Ok(())
     }).expect("top level");
 
 }
