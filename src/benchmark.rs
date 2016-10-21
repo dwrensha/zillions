@@ -242,13 +242,20 @@ pub fn run() -> Result<(), ::std::io::Error> {
              .required(true)
              .index(1)
              .help("The executable to benchmark"))
+        .arg(Arg::with_name("server")
+             .required(false)
+             .long("server")
+             .short("s")
+             .value_name("address")
+             .default_value("127.0.0.1:8080")
+             .help("TODO"))
         .get_matches();
 
     let executable = matches.value_of("EXECUTABLE").unwrap();
 
     println!("exectuable: {}", executable);
 
-    let addr_str = "127.0.0.1:8080";
+    let addr_str = matches.value_of("server").unwrap();
     let addr = match addr_str.parse::<::std::net::SocketAddr>() {
         Ok(a) => a,
         Err(e) => {
