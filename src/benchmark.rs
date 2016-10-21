@@ -164,15 +164,15 @@ impl <R> Future for Reading<R> where R: ::std::io::Read {
     }
 }
 
-pub struct Writing<W> where W: ::std::io::Write {
+pub struct Writing<W, B> where W: ::std::io::Write, B: AsRef<[u8]> {
     writer: Option<W>,
-    message: Vec<u8>,
+    message: B,
     pos: usize,
     wrote_header: bool,
 }
 
-impl <W> Writing<W> where W: ::std::io::Write {
-    fn new(writer: W, message: Vec<u8>) -> Writing<W> {
+impl <W, B> Writing<W, B> where W: ::std::io::Write, B: AsRef<[u8]> {
+    fn new(writer: W, message: B) -> Writing<W, B> {
         Writing {
             writer: Some(writer),
             message: message,
@@ -182,20 +182,20 @@ impl <W> Writing<W> where W: ::std::io::Write {
     }
 }
 
-impl <W> Future for Writing<W> where W: ::std::io::Write {
+impl <W, B> Future for Writing<W, B> where W: ::std::io::Write, B: AsRef<[u8]> {
     type Item = W;
     type Error = ::std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             if !self.wrote_header {
-                let buf = [self.message.len() as u8];
+                let buf = [self.message.as_ref().len() as u8];
                 try_nb!(self.writer.as_mut().unwrap().write(&buf));
                 self.wrote_header = true;
             } else {
-                let n = try_nb!(self.writer.as_mut().unwrap().write(&self.message[self.pos..]));
+                let n = try_nb!(self.writer.as_mut().unwrap().write(&self.message.as_ref()[self.pos..]));
                 self.pos += n;
-                if self.pos >= self.message.len() {
+                if self.pos >= self.message.as_ref().len() {
                     return Ok(Async::Ready(self.writer.take().unwrap()))
                 }
             }
@@ -225,7 +225,7 @@ impl ConnectionIdSource {
 fn read_until_message_with_prefix<R, B>(
     reader: R,
     prefix: B)
-    -> Box<Future<Item=(R, Vec<u8>), Error=::std::io::Error>>
+    -> Box<Future<Item=(R, Vec<u8>), Error=::std::io::Error> + 'static + Send>
     where R: ::std::io::Read + 'static + Send,
           B: AsRef<[u8]> + 'static + Send,
 {
@@ -262,10 +262,12 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
         subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
             let mut buf = [0; 8];
             <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
-            Ok(socket)
-//            read_until_message_with_prefix(socket, buf).map(|(socket, _message)| {
-//                socket
-//            })
+            Writing::new(socket, buf).and_then(move |socket| {
+                read_until_message_with_prefix(socket, buf).map(|(socket, _message)| {
+                    println!("got message");
+                    socket
+                })
+            })
         }))
     }
 
