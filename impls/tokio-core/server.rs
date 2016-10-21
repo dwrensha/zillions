@@ -84,66 +84,42 @@ pub fn main() {
         Rc::new(RefCell::new(Slab::with_capacity(1024)));
 
     let done = socket.incoming().for_each(move |(socket, _addr)| {
-        // what's the spec?
-        // first byte: 0 means publisher, 1 means subscriber.
 
         let subscribers = subscribers.clone();
-        let header = [0u8; 1];
-        let future = read_exact(socket, header).and_then(move |(socket, header)| -> Box<Future<Item=(),Error=::std::io::Error>> {
-            match header[0] {
-                0 => {
-                    // publisher
-                    let num_read = Rc::new(Cell::new(0u64));
-                    let num_read1 = num_read.clone();
-                    let done = futures::lazy(|| Ok(socket.split()))
-                        .and_then(|(reader, writer)| {
-                            ReadStream::new(reader).for_each(move |buf| {
-                                num_read1.set(num_read1.get() + 1);
-                                for ref mut sender in subscribers.borrow_mut().iter_mut() {
-                                    if sender.len() < 5 {
-                                        drop(sender.send(buf.clone()));
-                                    }
-                                }
-                                Ok(())
-                            }).and_then(move |()| {
-                                let mut word = [0u8; 8];
-                                <LittleEndian as ByteOrder>::write_u64(&mut word, num_read.get());
-                                write_all(writer, word).map(|_| ())
-                            })
-                        });
 
-                    Box::new(done)
-                }
-                1 => {
-                    // subscriber
-
-                    let (sender, queue) = ::write_queue::write_queue(socket);
-
-                    if !subscribers.borrow().has_available() {
-                        let len = subscribers.borrow().len();
-                        subscribers.borrow_mut().reserve_exact(len);
+        let future = futures::lazy(|| Ok(socket.split())).and_then(|(reader, writer)| {
+            let subscribers1 = subscribers.clone();
+            let read = ReadStream::new(reader).for_each(move |buf| {
+                for ref mut sender in subscribers1.borrow_mut().iter_mut() {
+                    if sender.len() < 5 {
+                        drop(sender.send(buf.clone()));
                     }
-                    let idx = match subscribers.borrow_mut().insert(sender) {
-                        Ok(idx) => idx,
-                        Err(_) => unreachable!(),
-                    };
+                }
+                Ok(())
+            });
 
-                    Box::new(queue.then(move |_| {
-                        subscribers.borrow_mut().remove(idx).unwrap();
-                        Ok(())
-                    }))
-                }
-                _ => {
-                    // error
-                    unimplemented!()
-                }
+            let (sender, queue) = ::write_queue::write_queue(writer);
+            if !subscribers.borrow().has_available() {
+                let len = subscribers.borrow().len();
+                subscribers.borrow_mut().reserve_exact(len);
             }
+            let idx = match subscribers.borrow_mut().insert(sender) {
+                Ok(idx) => idx,
+                Err(_) => unreachable!(),
+            };
+
+            let write = queue.then(move |_| {
+                subscribers.borrow_mut().remove(idx).unwrap();
+                Ok(())
+            });
+
+            Box::new(read.join(write).map(|_| ()))
         }).map_err(|e| {
             println!("error: {}", e);
         });
+
         handle.spawn(future);
 
-        // frame format: first byte is length of body. Then there is body.
         Ok(())
     });
 

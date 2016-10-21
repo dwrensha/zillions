@@ -51,6 +51,9 @@ fn run() -> Result<(), ::std::io::Error> {
         }
     }
 
+    socket.shutdown(std::net::Shutdown::Write).unwrap();
+
+
     read_thread.join().expect("read thread join");
 
     Ok(())
