@@ -290,6 +290,22 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     }))
 }
 
+struct ChildProcess {
+    child: ::std::process::Child
+}
+
+impl ChildProcess {
+    fn new(child: ::std::process::Child) -> ChildProcess {
+        ChildProcess { child: child }
+    }
+}
+
+impl Drop for ChildProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
+}
+
 pub fn run() -> Result<(), ::std::io::Error> {
     use clap::{App, Arg};
     let matches = App::new("Zillions benchmarker")
@@ -320,11 +336,16 @@ pub fn run() -> Result<(), ::std::io::Error> {
         }
     };
 
-    let _child = ::std::process::Command::new(executable)
+    let _child = ChildProcess::new(try!(::std::process::Command::new(executable)
         .arg(addr_str)
         .stdout(::std::process::Stdio::inherit())
         .stderr(::std::process::Stdio::inherit())
-        .spawn();
+        .spawn()));
+
+
+    // XXX
+    ::std::thread::sleep(::std::time::Duration::from_millis(200));
+
 
     // start tokio reactor
     let mut core = try!(::tokio_core::reactor::Core::new());
