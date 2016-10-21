@@ -1,4 +1,3 @@
-extern crate byteorder;
 extern crate slab;
 
 #[macro_use]
@@ -10,13 +9,12 @@ extern crate tokio_core;
 use std::env;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::cell::{Cell, RefCell};
+use std::cell::{RefCell};
 
-use byteorder::{LittleEndian, ByteOrder};
 use slab::Slab;
 use futures::{Async, Poll, Future};
 use futures::stream::Stream;
-use tokio_core::io::{read_exact, write_all, Io};
+use tokio_core::io::{Io};
 use tokio_core::net::TcpListener;
 use tokio_core::reactor::Core;
 
@@ -108,14 +106,11 @@ pub fn main() {
                 Err(_) => unreachable!(),
             };
 
-            let write = queue.then(move |_| {
+
+            Box::new(read.select(queue.map(|_|())).then(move |_| {
                 subscribers.borrow_mut().remove(idx).unwrap();
                 Ok(())
-            });
-
-            Box::new(read.join(write).map(|_| ()))
-        }).map_err(|e| {
-            println!("error: {}", e);
+            }))
         });
 
         handle.spawn(future);
