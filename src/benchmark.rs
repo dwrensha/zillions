@@ -130,10 +130,11 @@ impl <R> Reading<R> where R: ::std::io::Read {
 }
 
 impl <R> Future for Reading<R> where R: ::std::io::Read {
-    type Item = (Option<Vec<u8>>, R);
+    type Item = (R, Option<Vec<u8>>);
     type Error = ::std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        println!("poll reading");
         loop {
             if let Some(frame_end) = self.frame_end {
                 let n = try_nb!(self.reader.as_mut().unwrap().read(&mut self.buffer[self.pos..frame_end as usize]));
@@ -142,15 +143,15 @@ impl <R> Future for Reading<R> where R: ::std::io::Read {
                     self.pos = 0;
                     let result = ::std::mem::replace(&mut self.buffer, Vec::new());
                     self.frame_end = None;
-                    return Ok(Async::Ready((Some(result), self.reader.take().unwrap())))
+                    return Ok(Async::Ready((self.reader.take().unwrap(), Some(result))))
                 }
             } else {
                 let mut buf = [0u8];
                 let n = try_nb!(self.reader.as_mut().unwrap().read(&mut buf));
                 if n == 0 { // EOF
-                    return Ok(Async::Ready((None, self.reader.take().unwrap())))
+                    return Ok(Async::Ready((self.reader.take().unwrap(), None)))
                 }
-
+                println!("got length: {}", buf[0]);
                 self.frame_end = Some(buf[0]);
                 self.buffer = vec![0; buf[0] as usize];
             }
@@ -200,24 +201,33 @@ impl <W> Future for Writing<W> where W: ::std::io::Write {
 
 fn new_task(handle: &::tokio_core::reactor::Handle,
             addr: &::std::net::SocketAddr) -> Box<Future<Item=(), Error=::std::io::Error> + Send> {
+    use all::All;
+
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle).and_then(|stream| {
         tokio_core::io::write_all(stream, [0]).map(|(a,_)| a)
     });
 
     let mut subscribers = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..1 {
         subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(|stream| {
             tokio_core::io::write_all(stream, [1]).map(|(a,_)| a)
         }));
     }
 
-    Box::new(publisher.join(::all::All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
+    Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
         println!("connected");
 
         tie_knot((publisher, subscribers, 10i32), |(publisher, subscribers, n)| {
             println!("looping {}", n);
             Writing::new(publisher, vec![n as u8, 1,2,3]).and_then(move |publisher| {
-                futures::finished(((publisher, subscribers, n - 1), n > 0))
+                All::new(subscribers.into_iter().map(|s| {
+                    Reading::new(s).and_then(|(s, m)| {
+                        println!("got: {:?}", m);
+                        Ok(s)
+                    })
+                })).and_then(move |subscribers| {
+                    futures::finished(((publisher, subscribers, n - 1), n > 0))
+                })
             })
         }).map(|_| ())
     }))
