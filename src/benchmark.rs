@@ -248,7 +248,7 @@ pub fn run() -> Result<(), ::std::io::Error> {
              .short("s")
              .value_name("address")
              .default_value("127.0.0.1:8080")
-             .help("TODO"))
+             .help("address to use to connect to server"))
         .get_matches();
 
     let executable = matches.value_of("EXECUTABLE").unwrap();
