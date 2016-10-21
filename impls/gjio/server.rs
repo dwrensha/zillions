@@ -66,7 +66,6 @@ impl Drop for Bomb {
     }
 }
 
-
 fn handle_publisher(mut stream: SocketStream, messages_received: u64,
                     subscribers: Rc<RefCell<Slab<WriteQueue>>>) -> Promise<(), Error> {
     stream.try_read(vec![0], 1).then(move |(buf, n)| {

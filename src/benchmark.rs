@@ -10,6 +10,11 @@ extern crate tokio_core;
 
 use futures::{Async, Poll, Future};
 
+use byteorder::{LittleEndian, ByteOrder};
+
+use std::cell::{Cell};
+use std::rc::Rc;
+
 mod all {
     use futures::{Async, Poll, Future};
     enum ElemState<T> where T: Future {
@@ -198,20 +203,39 @@ impl <W> Future for Writing<W> where W: ::std::io::Write {
     }
 }
 
+#[derive(Clone)]
+struct ConnectionIdSource {
+    next_id: Rc<Cell<u64>>,
+}
+
+impl ConnectionIdSource {
+    fn new() -> ConnectionIdSource {
+        ConnectionIdSource {
+            next_id: Rc::new(Cell::new(0)),
+        }
+    }
+
+    fn next(&self) -> u64 {
+        let result = self.next_id.get();
+        self.next_id.set(result + 1);
+        result
+    }
+}
 
 fn new_task(handle: &::tokio_core::reactor::Handle,
-            addr: &::std::net::SocketAddr) -> Box<Future<Item=(), Error=::std::io::Error> + Send> {
+            addr: &::std::net::SocketAddr,
+            connection_id_source: ConnectionIdSource)
+            -> Box<Future<Item=(), Error=::std::io::Error> + Send>
+{
     use all::All;
 
-    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle).and_then(|stream| {
-        tokio_core::io::write_all(stream, [0]).map(|(a,_)| a)
-    });
+    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
+    let publisher_id = connection_id_source.next();
 
     let mut subscribers = Vec::new();
     for _ in 0..1 {
-        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(|stream| {
-            tokio_core::io::write_all(stream, [1]).map(|(a,_)| a)
-        }));
+        let _subscriber_id = connection_id_source.next();
+        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle));//.and_then(|socket| {
     }
 
     Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
@@ -276,7 +300,9 @@ pub fn run() -> Result<(), ::std::io::Error> {
 
     let pool = ::futures_cpupool::CpuPool::new_num_cpus();
 
-    let f = pool.spawn(new_task(&handle, &addr));
+    let connection_id_source = ConnectionIdSource::new();
+
+    let f = pool.spawn(new_task(&handle, &addr, connection_id_source));
 
     try!(core.run(f));
 
