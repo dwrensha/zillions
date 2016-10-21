@@ -1,7 +1,7 @@
 # Zillions
 
 A toy chat server spec and some sample implementations,
-to you choose among the many ways to write code to perform concurrent I/O.
+to help you choose among the many ways to write code to perform concurrent I/O.
 
 ## specification
 
