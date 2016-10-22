@@ -246,13 +246,14 @@ fn read_until_message_with_prefix<R, B>(
 
 fn new_task(handle: &::tokio_core::reactor::Handle,
             addr: &::std::net::SocketAddr,
-            connection_id_source: ConnectionIdSource)
+            connection_id_source: ConnectionIdSource,
+            number_of_messages: u64)
             -> Box<Future<Item=(), Error=::std::io::Error> + Send>
 {
     use all::All;
 
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
-    let _publisher_id = connection_id_source.next();
+    let publisher_id = connection_id_source.next();
 
     let mut subscribers = Vec::new();
     for _ in 0..1 {
@@ -268,17 +269,22 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
         }))
     }
 
-    Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(|(publisher, subscribers)| {
-        tie_knot((publisher, subscribers, 10i32), |(publisher, subscribers, n)| {
+    Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(move |(publisher, subscribers)| {
+        tie_knot((publisher, subscribers, 0u64), move |(publisher, subscribers, n)| {
             println!("looping {}", n);
-            Writing::new(publisher, vec![n as u8, 1,2,3]).and_then(move |publisher| {
-                All::new(subscribers.into_iter().map(|s| {
-                    Reading::new(s).and_then(|(s, m)| {
-                        println!("got: {:?}", m);
-                        Ok(s)
+            let mut buf = vec![255; 16];
+            let mut prefix = [0; 8];
+            <LittleEndian as ByteOrder>::write_u64(&mut buf[..8], publisher_id);
+            <LittleEndian as ByteOrder>::write_u64(&mut prefix[..], publisher_id);
+
+            Writing::new(publisher, buf).and_then(move |publisher| {
+                All::new(subscribers.into_iter().map(move |s| {
+                    read_until_message_with_prefix(s, prefix).map(|(s, message)| {
+                        println!("got: {:?}", message);
+                        s
                     })
                 })).and_then(move |subscribers| {
-                    futures::finished(((publisher, subscribers, n - 1), n > 0))
+                    futures::finished(((publisher, subscribers, n + 1), n < number_of_messages))
                 })
             })
         }).map(|_| ())
@@ -360,7 +366,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
 
     let connection_id_source = ConnectionIdSource::new();
 
-    let f = pool.spawn(new_task(&handle, &addr, connection_id_source));
+    let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5)
+                       .join(new_task(&core.handle(), &addr, connection_id_source, 5)));
 
     try!(core.run(f));
 
