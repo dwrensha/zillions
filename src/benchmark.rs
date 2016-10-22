@@ -307,9 +307,15 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
             })
         }).and_then(|(publisher, subscribers, _)| {
             try!(publisher.shutdown(::std::net::Shutdown::Write));
-            Ok(publisher)
-        }).and_then(|publisher| {
-            read_until_eof(publisher).map(|_| ()) // TODO timeout?
+            for sub in &subscribers {
+                try!(sub.shutdown(::std::net::Shutdown::Write));
+            }
+            Ok((publisher, subscribers))
+        }).and_then(|(publisher, subscribers)| {
+            read_until_eof(publisher).join(
+                All::new(subscribers.into_iter().map(|sub| {
+                    read_until_eof(sub)
+                }))).map(|_| ()) // TODO timeout?
         })
     }))
 }
