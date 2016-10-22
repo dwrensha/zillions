@@ -244,6 +244,24 @@ fn read_until_message_with_prefix<R, B>(
     }).map(|(reader, _, message)| (reader, message)))
 }
 
+fn read_until_eof<R>(reader: R)
+                     -> Box<Future<Item=R, Error=::std::io::Error> + 'static + Send>
+    where R: ::std::io::Read + 'static + Send,
+{
+    Box::new(tie_knot(reader, move |reader| {
+        Reading::new(reader).and_then(move |(reader, message)| {
+            match message {
+                Some(_) => {
+                    Ok((reader, true))
+                }
+                None => {
+                    Ok((reader, false))
+                }
+            }
+        })
+    }))
+}
+
 fn new_task(handle: &::tokio_core::reactor::Handle,
             addr: &::std::net::SocketAddr,
             connection_id_source: ConnectionIdSource,
@@ -287,7 +305,12 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
                     futures::finished(((publisher, subscribers, n + 1), n < number_of_messages))
                 })
             })
-        }).map(|_| ())
+        }).and_then(|(publisher, subscribers, _)| {
+            try!(publisher.shutdown(::std::net::Shutdown::Write));
+            Ok(publisher)
+        }).and_then(|publisher| {
+            read_until_eof(publisher).map(|_| ()) // TODO timeout?
+        })
     }))
 }
 
