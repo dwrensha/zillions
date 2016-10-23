@@ -237,7 +237,7 @@ fn read_until_message_with_prefix<R, B>(
                 Some(message) => {
                     let len = prefix.as_ref().len();
                     let mut new_ticks = ticks;
-                    if  &message[0..len] != prefix.as_ref() {
+                    if  &message[0..len] == prefix.as_ref() {
                         Ok(((reader, prefix, new_ticks, Some(message)), false))
                     } else {
                         if &message[..CLOCK_PREFIX.len()] == CLOCK_PREFIX {
@@ -307,7 +307,6 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
         let successful_message_count = ::futures::task::TaskRc::new(AtomicUsize::new(0));
         let smc = successful_message_count.clone();
         tie_knot((publisher, subscribers, 0u64), move |(publisher, subscribers, n)| {
-            println!("looping {}", n);
             let mut buf = vec![255; 16];
             let mut prefix = [0; 8];
             <LittleEndian as ByteOrder>::write_u64(&mut buf[..8], publisher_id);
@@ -331,7 +330,7 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
                             stream
                         })
                 })).and_then(move |subscribers| {
-                    futures::finished(((publisher, subscribers, n + 1), n + 1 < number_of_messages))
+                    Ok(((publisher, subscribers, n + 1), n + 1 < number_of_messages))
                 })
             })
         }).and_then(|(publisher, subscribers, _)| {
@@ -430,7 +429,6 @@ pub fn run() -> Result<(), ::std::io::Error> {
     handle.spawn(clock_connection.and_then(move |stream| {
         tie_knot((stream, handle1), move |(stream, handle)| {
             use tokio_core::reactor::Timeout;
-            println!("TICK");
             Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
                 Writing::new(stream, CLOCK_PREFIX).map(move |stream| {
                     ((stream, handle), true)
