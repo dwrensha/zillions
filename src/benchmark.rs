@@ -281,15 +281,16 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
             addr: &::std::net::SocketAddr,
             connection_id_source: ConnectionIdSource,
             number_of_messages: u64)
-            -> Box<Future<Item=(), Error=::std::io::Error> + Send>
+            -> Box<Future<Item=usize, Error=::std::io::Error> + Send>
 {
     use all::All;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
     let publisher_id = connection_id_source.next();
 
     let mut subscribers = Vec::new();
-    for _ in 0..1 {
+    for _ in 0..2 {
         let subscriber_id = connection_id_source.next();
         subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
             let mut buf = [0; 8];
@@ -302,6 +303,8 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     }
 
     Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(move |(publisher, subscribers)| {
+        let successful_message_count = ::futures::task::TaskRc::new(AtomicUsize::new(0));
+        let smc = successful_message_count.clone();
         tie_knot((publisher, subscribers, 0u64), move |(publisher, subscribers, n)| {
             println!("looping {}", n);
             let mut buf = vec![255; 16];
@@ -309,12 +312,22 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
             <LittleEndian as ByteOrder>::write_u64(&mut buf[..8], publisher_id);
             <LittleEndian as ByteOrder>::write_u64(&mut prefix[..], publisher_id);
 
+            let smc = smc.clone();
             Writing::new(publisher, buf).and_then(move |publisher| {
                 All::new(subscribers.into_iter().map(move |s| {
+                    let smc = smc.clone();
                     read_until_message_with_prefix(s, prefix, 2)
-                        .map(|(s, message)| {
-                            println!("got: {:?}", message);
-                            s
+                        .map(move |(stream, message)| {
+                            match message {
+                                Some(_) => {
+                                    // TODO check that the message is what the publisher sent.
+                                    smc.with(|x| {
+                                        x.fetch_add(1, Ordering::SeqCst);
+                                    });
+                                }
+                                None => (),
+                            }
+                            stream
                         })
                 })).and_then(move |subscribers| {
                     futures::finished(((publisher, subscribers, n + 1), n < number_of_messages))
@@ -331,8 +344,8 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
                 All::new(subscribers.into_iter().map(|sub| {
                     read_until_eof(sub)
                 })))
-        })
-    }).map(|_| ()))
+        }).map(move |_| successful_message_count.with(|x| x.load(Ordering::SeqCst)))
+    }))
 }
 
 struct ChildProcess {
@@ -426,7 +439,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5)
                        .join(new_task(&core.handle(), &addr, connection_id_source, 5)));
 
-    try!(core.run(f));
+    let x = try!(core.run(f));
+    println!("x = {:?}", x);
 
     Ok(())
 }
