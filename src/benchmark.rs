@@ -307,7 +307,7 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
         let successful_message_count = ::futures::task::TaskRc::new(AtomicUsize::new(0));
         let smc = successful_message_count.clone();
         tie_knot((publisher, subscribers, 0u64), move |(publisher, subscribers, n)| {
-            println!("looping {}", n);
+//            println!("looping {}", n);
             let mut buf = vec![255; 16];
             let mut prefix = [0; 8];
             <LittleEndian as ByteOrder>::write_u64(&mut buf[..8], publisher_id);
@@ -331,10 +331,11 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
                             stream
                         })
                 })).and_then(move |subscribers| {
-                    futures::finished(((publisher, subscribers, n + 1), n < number_of_messages))
+                    futures::finished(((publisher, subscribers, n + 1), n + 1 < number_of_messages))
                 })
             })
         }).and_then(|(publisher, subscribers, _)| {
+            println!("shutting down");
             try!(publisher.shutdown(::std::net::Shutdown::Write));
             for sub in &subscribers {
                 try!(sub.shutdown(::std::net::Shutdown::Write));
@@ -437,8 +438,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
         })
     }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
 
-    let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5, 3)
-                       .join(new_task(&core.handle(), &addr, connection_id_source, 5, 10)));
+    let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 1000, 3)
+                       .join(new_task(&core.handle(), &addr, connection_id_source, 1000, 10)));
 
     let x = try!(core.run(f));
     println!("x = {:?}", x);
