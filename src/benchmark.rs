@@ -280,7 +280,8 @@ fn read_until_eof<R>(reader: R)
 fn new_task(handle: &::tokio_core::reactor::Handle,
             addr: &::std::net::SocketAddr,
             connection_id_source: ConnectionIdSource,
-            number_of_messages: u64)
+            number_of_messages: u64,
+            number_of_subscribers: u64)
             -> Box<Future<Item=usize, Error=::std::io::Error> + Send>
 {
     use all::All;
@@ -290,7 +291,7 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
     let publisher_id = connection_id_source.next();
 
     let mut subscribers = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..number_of_subscribers {
         let subscriber_id = connection_id_source.next();
         subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
             let mut buf = [0; 8];
@@ -436,8 +437,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
         })
     }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
 
-    let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5)
-                       .join(new_task(&core.handle(), &addr, connection_id_source, 5)));
+    let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5, 3)
+                       .join(new_task(&core.handle(), &addr, connection_id_source, 5, 10)));
 
     let x = try!(core.run(f));
     println!("x = {:?}", x);
