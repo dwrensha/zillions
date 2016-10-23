@@ -438,16 +438,13 @@ pub fn run() -> Result<(), ::std::io::Error> {
     }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
 
 
-    //let mut futures = Vec::new();
-    //for _ in 0..3 {
-    //    futures.push(pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5000, 3)));
-    //}
-    //let f = ::all::All::new(futures.into_iter());
+    let mut futures = Vec::new();
+    for _ in 0..1 {
+        futures.push(pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 15000, 3)));
+    }
+    let f = ::all::All::new(futures.into_iter());
 
-    let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 50, 3));
-
-//    let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 1000, 3)
-//                       .join(new_task(&core.handle(), &addr, connection_id_source, 1000, 10)));
+    //let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 50, 3));
 
     let x = try!(core.run(f));
     println!("x = {:?}", x);
