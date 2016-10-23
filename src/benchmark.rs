@@ -409,17 +409,19 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let pool = ::futures_cpupool::CpuPool::new_num_cpus();
     let connection_id_source = ConnectionIdSource::new();
 
+    // Start a connection whose sole job is to send periodic "tick" messages.
     let clock_connection = ::tokio_core::net::TcpStream::connect(&addr, &handle);
     let handle1 = handle.clone();
     handle.spawn(clock_connection.and_then(move |stream| {
         tie_knot((stream, handle1), move |(stream, handle)| {
-            ::tokio_core::reactor::Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
+            use tokio_core::reactor::Timeout;
+            Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
                 Writing::new(stream, CLOCK_PREFIX).map(move |stream| {
                     ((stream, handle), true)
                 })
             })
         })
-    }).map(|_| ()).map_err(|_|()));
+    }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
 
     let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5)
                        .join(new_task(&core.handle(), &addr, connection_id_source, 5)));
