@@ -14,6 +14,7 @@ use byteorder::{LittleEndian, ByteOrder};
 
 use std::cell::{Cell};
 use std::rc::Rc;
+use std::time::Duration;
 
 mod all {
     use futures::{Async, Poll, Future};
@@ -209,7 +210,7 @@ struct ConnectionIdSource {
 impl ConnectionIdSource {
     fn new() -> ConnectionIdSource {
         ConnectionIdSource {
-            next_id: Rc::new(Cell::new(0)),
+            next_id: Rc::new(Cell::new(1)),
         }
     }
 
@@ -220,28 +221,42 @@ impl ConnectionIdSource {
     }
 }
 
+static CLOCK_PREFIX: &'static [u8] = &[0,0,0,0,0,0,0,0];
+
 fn read_until_message_with_prefix<R, B>(
     reader: R,
-    prefix: B)
-    -> Box<Future<Item=(R, Vec<u8>), Error=::std::io::Error> + 'static + Send>
+    prefix: B,
+    timeout_seconds: u64)
+    -> Box<Future<Item=(R, Option<Vec<u8>>), Error=::std::io::Error> + 'static + Send>
     where R: ::std::io::Read + 'static + Send,
           B: AsRef<[u8]> + 'static + Send,
 {
-    Box::new(tie_knot((reader, prefix, Vec::new()), move |(reader, prefix, _)| {
+    Box::new(tie_knot((reader, prefix, 0, None), move |(reader, prefix, ticks, _)| {
         Reading::new(reader).and_then(move |(reader, message)| {
             match message {
                 Some(message) => {
                     let len = prefix.as_ref().len();
-                    let more = &message[0..len] != prefix.as_ref();
-                    Ok(((reader, prefix, message), more))
+                    let mut new_ticks = ticks;
+                    if  &message[0..len] != prefix.as_ref() {
+                        Ok(((reader, prefix, new_ticks, Some(message)), false))
+                    } else {
+                        if &message[..CLOCK_PREFIX.len()] == CLOCK_PREFIX {
+                            new_ticks = ticks + 1;
+                        }
+
+                        if new_ticks > timeout_seconds {
+                            Ok(((reader, prefix, new_ticks, None), false))
+                        }  else {
+                            Ok(((reader, prefix, new_ticks, Some(message)), true))
+                        }
+                    }
                 }
                 None => {
-                    Err(::std::io::Error::new(
-                        ::std::io::ErrorKind::UnexpectedEof, "premature EOF"))
+                    Ok(((reader, prefix, ticks, None), false))
                 }
             }
         })
-    }).map(|(reader, _, message)| (reader, message)))
+    }).map(|(reader, _, _, message)| (reader, message)))
 }
 
 fn read_until_eof<R>(reader: R)
@@ -280,9 +295,8 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
             let mut buf = [0; 8];
             <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
             Writing::new(socket, buf).and_then(move |socket| {
-                read_until_message_with_prefix(socket, buf).map(|(socket, _message)| {
-                    socket
-                })
+                read_until_message_with_prefix(socket, buf, 2)
+                    .map(|(socket, _message)| { socket })
             })
         }))
     }
@@ -297,10 +311,11 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
 
             Writing::new(publisher, buf).and_then(move |publisher| {
                 All::new(subscribers.into_iter().map(move |s| {
-                    read_until_message_with_prefix(s, prefix).map(|(s, message)| {
-                        println!("got: {:?}", message);
-                        s
-                    })
+                    read_until_message_with_prefix(s, prefix, 2)
+                        .map(|(s, message)| {
+                            println!("got: {:?}", message);
+                            s
+                        })
                 })).and_then(move |subscribers| {
                     futures::finished(((publisher, subscribers, n + 1), n < number_of_messages))
                 })
@@ -315,9 +330,9 @@ fn new_task(handle: &::tokio_core::reactor::Handle,
             read_until_eof(publisher).join(
                 All::new(subscribers.into_iter().map(|sub| {
                     read_until_eof(sub)
-                }))).map(|_| ()) // TODO timeout?
+                })))
         })
-    }))
+    }).map(|_| ()))
 }
 
 struct ChildProcess {
@@ -392,8 +407,19 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let handle = core.handle();
 
     let pool = ::futures_cpupool::CpuPool::new_num_cpus();
-
     let connection_id_source = ConnectionIdSource::new();
+
+    let clock_connection = ::tokio_core::net::TcpStream::connect(&addr, &handle);
+    let handle1 = handle.clone();
+    handle.spawn(clock_connection.and_then(move |stream| {
+        tie_knot((stream, handle1), move |(stream, handle)| {
+            ::tokio_core::reactor::Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
+                Writing::new(stream, CLOCK_PREFIX).map(move |stream| {
+                    ((stream, handle), true)
+                })
+            })
+        })
+    }).map(|_| ()).map_err(|_|()));
 
     let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 5)
                        .join(new_task(&core.handle(), &addr, connection_id_source, 5)));
