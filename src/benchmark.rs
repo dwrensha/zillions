@@ -8,7 +8,7 @@ extern crate futures_cpupool;
 #[macro_use]
 extern crate tokio_core;
 
-use futures::{Async, Poll, Future};
+use futures::{Async, Poll, Future, Complete};
 
 use byteorder::{LittleEndian, ByteOrder};
 
@@ -222,6 +222,106 @@ impl ConnectionIdSource {
 }
 
 static CLOCK_PREFIX: &'static [u8] = &[0,0,0,0,0,0,0,0];
+
+struct ReadStreamWaitFor {
+    prefix: Vec<u8>,
+    complete: Complete<Vec<u8>>,
+    timeout_ticks: u64,
+}
+
+type ChannelElem = ReadStreamWaitFor;
+
+struct ReadStream<R> where R: ::std::io::Read {
+    in_progress: Reading<R>,
+    ticks_elapsed: u64,
+    number_successfully_read: u64,
+    receiver: ::tokio_core::channel::Receiver<ChannelElem>,
+    waiting_for: Option<ReadStreamWaitFor>
+}
+
+impl <R> ReadStream<R> where R: ::std::io::Read {
+    fn new(handle: &::tokio_core::reactor::Handle, reader: R)
+           -> ::std::io::Result<(::tokio_core::channel::Sender<ChannelElem>, ReadStream<R>)> {
+        let (sender, receiver) = try!(::tokio_core::channel::channel(handle));
+        Ok((sender, ReadStream {
+            in_progress: Reading::new(reader),
+            ticks_elapsed: 0,
+            number_successfully_read: 0,
+            receiver: receiver,
+            waiting_for: None,
+        }))
+    }
+}
+
+impl <R> Future for ReadStream<R> where R: ::std::io::Read {
+    type Item = u64; // Total number of messages received.
+    type Error = ::std::io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        use futures::stream::Stream;
+
+        loop {
+
+            if self.waiting_for.is_none() {
+                match self.receiver.poll() {
+                    Ok(Async::Ready(Some(wait_for))) => {
+                        self.waiting_for = Some(wait_for);
+                    }
+                    Ok(Async::Ready(None)) => {
+                        return Ok(Async::Ready(self.number_successfully_read))
+                    }
+                    Ok(Async::NotReady) => (),
+                    Err(e) => {
+                        return Err(e)
+                    }
+                }
+            }
+
+            let (reader, message) = try_ready!(self.in_progress.poll());
+            self.in_progress = Reading::new(reader);
+            match message {
+                Some(message) => {
+                    enum A {
+                        Matches,
+                        TimedOut,
+                    }
+                    let aa = match self.waiting_for {
+                        Some(ReadStreamWaitFor { ref prefix, ref mut timeout_ticks, .. }) => {
+                            let len = prefix.len();
+                            if &message[0..len] == &prefix[..] {
+                                Some(A::Matches)
+                            } else if &message[..CLOCK_PREFIX.len()] == CLOCK_PREFIX {
+                                if *timeout_ticks == 0 {
+                                    // timed out.
+                                    Some(A::TimedOut)
+                                } else {
+                                    *timeout_ticks -= 1;
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        None => None,
+                    };
+                    match aa {
+                        Some(A::Matches) => {
+                            let waiting_for = self.waiting_for.take().unwrap();
+                            waiting_for.complete.complete(message);
+                        }
+                        Some(A::TimedOut) => {
+                            self.waiting_for.take();
+                        }
+                        None => (),
+                    }
+                }
+                None => {
+                    return Ok(Async::Ready(self.number_successfully_read))
+                }
+            }
+        }
+    }
+}
 
 fn read_until_message_with_prefix<R, B>(
     reader: R,
