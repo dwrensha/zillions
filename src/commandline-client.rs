@@ -42,10 +42,12 @@ fn run() -> Result<(), ::std::io::Error> {
                     socket.write_all(&[bytes.len() as u8]).unwrap();
                     socket.write_all(bytes).unwrap();
                 } else {
-                    unimplemented!();
+                    println!("ERROR: message has more than 255 bytes")
                 }
             }
-            Err(_) => unimplemented!(),
+            Err(e) => {
+                println!("ERROR: {:?}", e);
+            }
         }
     }
 
