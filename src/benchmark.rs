@@ -478,9 +478,9 @@ impl Drop for ChildProcess {
 
 pub fn run() -> Result<(), ::std::io::Error> {
     use clap::{App, Arg};
-    let matches = App::new("Zillions benchmarker")
+    let matches = App::new("Zillions stress tester")
         .version("0.0.0")
-        .about("Does awesome things")
+        .about("Runs a given zillions chat server and connects some automated clients to it.")
         .arg(Arg::with_name("EXECUTABLE")
              .required(true)
              .index(1)
@@ -488,12 +488,39 @@ pub fn run() -> Result<(), ::std::io::Error> {
         .arg(Arg::with_name("server")
              .required(false)
              .long("server")
-             .short("s")
+             .short("a")
              .value_name("address")
              .default_value("127.0.0.1:8080")
              .help("address to use to connect to server"))
+        .arg(Arg::with_name("publishers")
+             .required(false)
+             .long("publishers")
+             .short("p")
+             .value_name("count")
+             .default_value("2")
+             .help("number of publishers to start"))
+        .arg(Arg::with_name("subscribers")
+             .required(false)
+             .long("subscribers")
+             .short("s")
+             .value_name("count")
+             .default_value("3")
+             .help("number of publishers to start for each publisher"))
+        .arg(Arg::with_name("messages")
+             .required(false)
+             .long("messages")
+             .short("m")
+             .value_name("count")
+             .default_value("1000")
+             .help("number of messages to send from each publisher"))
         .get_matches();
 
+    let number_of_publishers = matches.value_of("publishers").unwrap().parse::<u64>()
+        .expect("parsing 'publishers'");
+    let number_of_subscribers = matches.value_of("subscribers").unwrap().parse::<u64>()
+        .expect("parsing 'subscribers'");
+    let number_of_messages = matches.value_of("messages").unwrap().parse::<u64>()
+        .expect("parsing 'messages'");
     let executable = matches.value_of("EXECUTABLE").unwrap();
 
     println!("exectuable: {}", executable);
@@ -551,8 +578,10 @@ pub fn run() -> Result<(), ::std::io::Error> {
 
     let mut init_futures = Vec::new();
     let mut read_tasks = Vec::new();
-    for _ in 0..1 {
-        let (number_read, senders) = try!(initialize_subscribers(&handle, &pool, &addr, connection_id_source.clone(), 1));
+    for _ in 0..number_of_publishers {
+        let (number_read, senders) =
+            try!(initialize_subscribers(
+                &handle, &pool, &addr, connection_id_source.clone(), number_of_subscribers));
         init_futures.push(senders);
         read_tasks.push(number_read);
     }
@@ -568,10 +597,10 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let handle1 = handle.clone();
     let pool1 = pool.clone();
     let write_tasks = ::all::All::new(init_futures.into_iter()).and_then(move |ss| {
-        println!("inited");
         let mut publishers = Vec::new();
         for senders in ss.into_iter() {
-            publishers.push(run_publisher(&handle1, &pool1, &addr, connection_id_source.clone(), 100, senders));
+            publishers.push(
+                run_publisher(&handle1, &pool1, &addr, connection_id_source.clone(), number_of_messages, senders));
         }
         ::all::All::new(publishers.into_iter())
     });
