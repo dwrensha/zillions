@@ -336,7 +336,7 @@ fn initialize_subscribers(
     addr: &::std::net::SocketAddr,
     connection_id_source: ConnectionIdSource,
     number_of_subscribers: u64)
-    -> Result<(Box<Future<Item=u64, Error=::std::io::Error>>,
+    -> Result<(Box<Future<Item=u64, Error=::std::io::Error> + Send>,
                Box<Future<Item=Vec<Option<::tokio_core::channel::Sender<ChannelElem>>>,
                           Error=::std::io::Error>>),
               ::std::io::Error>
@@ -357,7 +357,7 @@ fn initialize_subscribers(
             Err(_) => Ok(None),
         }));
         subscriber_read_tasks.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
-            pool1.spawn(futures::finished(()).and_then(move |()|  {
+            futures::finished(()).and_then(move |()|  {
                 use tokio_core::io::Io;
                 let (reader, writer) = socket.split();
                 let read_task = ReadTask::new(reader, receiver);
@@ -390,7 +390,7 @@ fn initialize_subscribers(
                 });
 
                 read_task.join(sender_init)
-            })).map(|(n, _)| n)
+            }).map(|(n, _)| n)
         }));
     }
 
@@ -418,10 +418,8 @@ fn run_publisher(
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
     let publisher_id = connection_id_source.next();
 
-    Box::new(pool.spawn(publisher.and_then(move |publisher| {
-        println!("publisher connected");
+    Box::new(publisher.and_then(move |publisher| {
         tie_knot((publisher, senders, 0u64), move |(publisher, mut senders, n)| {
-            println!("looping {}", n);
             ::futures::finished(()).and_then(move |()| {
                 let mut buf = vec![255; 16];
                 let mut prefix = vec![0; 8];
@@ -459,7 +457,7 @@ fn run_publisher(
                 })
             })
         })
-    }).map(|(_writer, _senders, _n)| ())))
+    }).map(|(_writer, _senders, _n)| ()))
 }
 
 struct ChildProcess {
@@ -568,14 +566,17 @@ pub fn run() -> Result<(), ::std::io::Error> {
     });
 
     let handle1 = handle.clone();
+    let pool1 = pool.clone();
     let write_tasks = ::all::All::new(init_futures.into_iter()).and_then(move |ss| {
         println!("inited");
         let mut publishers = Vec::new();
         for senders in ss.into_iter() {
-            publishers.push(run_publisher(&handle1, &pool, &addr, connection_id_source.clone(), 100, senders));
+            publishers.push(run_publisher(&handle1, &pool1, &addr, connection_id_source.clone(), 100, senders));
         }
         ::all::All::new(publishers.into_iter())
     });
+
+    let read_tasks = pool.spawn(read_tasks);
 
     let x = try!(core.run(read_tasks.join(write_tasks)));
     println!("x = {:?}", x);
