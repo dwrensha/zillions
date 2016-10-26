@@ -332,32 +332,34 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
 
 fn initialize_subscribers(
     handle: &::tokio_core::reactor::Handle,
-    pool: &::futures_cpupool::CpuPool,
+    _pool: &::futures_cpupool::CpuPool,
     addr: &::std::net::SocketAddr,
     connection_id_source: ConnectionIdSource,
     number_of_subscribers: u64)
     -> Result<(Box<Future<Item=u64, Error=::std::io::Error> + Send>,
-               Box<Future<Item=Vec<Option<::tokio_core::channel::Sender<ChannelElem>>>,
+               Box<Future<Item=Vec<::tokio_core::channel::Sender<ChannelElem>>,
                           Error=::std::io::Error>>),
               ::std::io::Error>
 {
     use all::All;
 
     let mut subscriber_read_tasks = Vec::new();
-    let mut subscriber_senders = Vec::new();
+    let mut subscriber_senders: Option<Box<Future<Item=Vec<::tokio_core::channel::Sender<ChannelElem>>,
+                                                  Error=::std::io::Error> + Send>> =
+        Some(Box::new(futures::finished(Vec::new())));
     for _ in 0..number_of_subscribers {
         let subscriber_id = connection_id_source.next();
 
-        let pool1 = pool.clone();
         let (sender, receiver) = try!(::tokio_core::channel::channel(handle));
         let (sender_complete, sender_oneshot) = ::futures::oneshot();
 
-        subscriber_senders.push(sender_oneshot.then(|r| match r {
-            Ok(v) => Ok(Some(v)),
-            Err(_) => Ok(None),
-        }));
+        let subscriber_senders1 = subscriber_senders.take().unwrap();
+        subscriber_senders = Some(Box::new(sender_oneshot.map_err(|_| {
+            ::std::io::Error::new(::std::io::ErrorKind::Other,"canceled")
+        })));
+
         subscriber_read_tasks.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
-            futures::finished(()).and_then(move |()|  {
+            subscriber_senders1.and_then(move |mut subscriber_senders|  {
                 use tokio_core::io::Io;
                 let (reader, writer) = socket.split();
                 let read_task = ReadTask::new(reader, receiver);
@@ -384,8 +386,9 @@ fn initialize_subscribers(
                         Err(::futures::Canceled) => Ok(false)
                     }).join(writing).map(move |(succeeded, _writer)| {
                         if succeeded {
-                            sender_complete.complete(sender);
+                            subscriber_senders.push(sender)
                         }
+                        sender_complete.complete(subscriber_senders);
                     })
                 });
 
@@ -402,24 +405,23 @@ fn initialize_subscribers(
         Ok(sum)
     });
 
-    let senders = All::new(subscriber_senders.into_iter());
-    Ok((Box::new(read_tasks), Box::new(senders)))
+    Ok((Box::new(read_tasks), subscriber_senders.unwrap()))
 }
 
 fn run_publisher(
     handle: &::tokio_core::reactor::Handle,
-    pool: &::futures_cpupool::CpuPool,
+    _pool: &::futures_cpupool::CpuPool,
     addr: &::std::net::SocketAddr,
     connection_id_source: ConnectionIdSource,
     number_of_messages: u64,
-    senders: Vec<Option<::tokio_core::channel::Sender<ChannelElem>>>)
+    senders: Vec<::tokio_core::channel::Sender<ChannelElem>>)
     -> Box<Future<Item=(), Error=::std::io::Error>>
 {
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
     let publisher_id = connection_id_source.next();
 
     Box::new(publisher.and_then(move |publisher| {
-        tie_knot((publisher, senders, 0u64), move |(publisher, mut senders, n)| {
+        tie_knot((publisher, senders, 0u64), move |(publisher, senders, n)| {
             ::futures::finished(()).and_then(move |()| {
                 let mut buf = vec![255; 16];
                 let mut prefix = vec![0; 8];
@@ -428,19 +430,14 @@ fn run_publisher(
 
                 let mut dones = Vec::new();
                 for idx in 0..senders.len() {
-                    match senders[idx] {
-                        Some(ref mut sender) => {
-                            let (complete, oneshot) = ::futures::oneshot();
-                            dones.push(oneshot);
-                            let wait_for = ReadTaskWaitFor {
-                                prefix: prefix.clone(),
-                                complete: complete,
-                                timeout_ticks: 2,
-                            };
-                            try!(sender.send(wait_for))
-                        }
-                        None => (),
-                    }
+                    let (complete, oneshot) = ::futures::oneshot();
+                    dones.push(oneshot);
+                    let wait_for = ReadTaskWaitFor {
+                        prefix: prefix.clone(),
+                        complete: complete,
+                        timeout_ticks: 2,
+                    };
+                    try!(senders[idx].send(wait_for))
                 }
 
                 let writing = Writing::new(publisher, buf);
