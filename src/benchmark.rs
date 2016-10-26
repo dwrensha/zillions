@@ -270,7 +270,6 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
         use futures::stream::Stream;
 
         loop {
-
             if self.waiting_for.is_none() {
                 match self.receiver.poll() {
                     Ok(Async::Ready(Some(wait_for))) => {
@@ -315,6 +314,7 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
                     };
                     match aa {
                         Some(A::Matches) => {
+                            self.number_successfully_read += 1;
                             let waiting_for = self.waiting_for.take().unwrap();
                             waiting_for.complete.complete(message);
                         }
@@ -440,7 +440,7 @@ fn new_tasks(handle: &::tokio_core::reactor::Handle,
                 })
             })
         })
-    }));
+    }).map(|(_writer, _senders, _n)| ()));
 
 
     Box::new(write_task.join(read_tasks).and_then(move |(_, read_values)| {
@@ -449,133 +449,6 @@ fn new_tasks(handle: &::tokio_core::reactor::Handle,
             sum += read_values[idx];
         }
         Ok(sum)
-    }))
-}
-
-
-fn read_until_message_with_prefix<R, B>(
-    reader: R,
-    prefix: B,
-    timeout_seconds: u64)
-    -> Box<Future<Item=(R, Option<Vec<u8>>), Error=::std::io::Error> + 'static + Send>
-    where R: ::std::io::Read + 'static + Send,
-          B: AsRef<[u8]> + 'static + Send,
-{
-    Box::new(tie_knot((reader, prefix, 0, None), move |(reader, prefix, ticks, _)| {
-        Reading::new(reader).and_then(move |(reader, message)| {
-            match message {
-                Some(message) => {
-                    let len = prefix.as_ref().len();
-                    let mut new_ticks = ticks;
-                    if  &message[0..len] == prefix.as_ref() {
-                        Ok(((reader, prefix, new_ticks, Some(message)), false))
-                    } else {
-                        if &message[..CLOCK_PREFIX.len()] == CLOCK_PREFIX {
-                            new_ticks = ticks + 1;
-                        }
-
-                        if new_ticks > timeout_seconds {
-                            Ok(((reader, prefix, new_ticks, None), false))
-                        }  else {
-                            Ok(((reader, prefix, new_ticks, Some(message)), true))
-                        }
-                    }
-                }
-                None => {
-                    Ok(((reader, prefix, ticks, None), false))
-                }
-            }
-        })
-    }).map(|(reader, _, _, message)| (reader, message)))
-}
-
-fn read_until_eof<R>(reader: R)
-                     -> Box<Future<Item=R, Error=::std::io::Error> + 'static + Send>
-    where R: ::std::io::Read + 'static + Send,
-{
-    Box::new(tie_knot(reader, move |reader| {
-        Reading::new(reader).and_then(move |(reader, message)| {
-            match message {
-                Some(_) => {
-                    Ok((reader, true))
-                }
-                None => {
-                    Ok((reader, false))
-                }
-            }
-        })
-    }))
-}
-
-fn new_task(handle: &::tokio_core::reactor::Handle,
-            addr: &::std::net::SocketAddr,
-            connection_id_source: ConnectionIdSource,
-            number_of_messages: u64,
-            number_of_subscribers: u64)
-            -> Box<Future<Item=usize, Error=::std::io::Error> + Send>
-{
-    use all::All;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
-    let publisher_id = connection_id_source.next();
-
-    let mut subscribers = Vec::new();
-    for _ in 0..number_of_subscribers {
-        let subscriber_id = connection_id_source.next();
-        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
-            let mut buf = [0; 8];
-            <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
-            Writing::new(socket, buf).and_then(move |socket| {
-                read_until_message_with_prefix(socket, buf, 2)
-                    .map(|(socket, _message)| { socket })
-            })
-        }))
-    }
-
-    Box::new(publisher.join(All::new(subscribers.into_iter())).and_then(move |(publisher, subscribers)| {
-        let successful_message_count = ::futures::task::TaskRc::new(AtomicUsize::new(0));
-        let smc = successful_message_count.clone();
-        tie_knot((publisher, subscribers, 0u64), move |(publisher, subscribers, n)| {
-            let mut buf = vec![255; 16];
-            let mut prefix = [0; 8];
-            <LittleEndian as ByteOrder>::write_u64(&mut buf[..8], publisher_id);
-            <LittleEndian as ByteOrder>::write_u64(&mut prefix[..], publisher_id);
-
-            let smc = smc.clone();
-            Writing::new(publisher, buf).and_then(move |publisher| {
-                All::new(subscribers.into_iter().map(move |s| {
-                    let smc = smc.clone();
-                    read_until_message_with_prefix(s, prefix, 2)
-                        .map(move |(stream, message)| {
-                            match message {
-                                Some(_) => {
-                                    // TODO check that the message is what the publisher sent.
-                                    smc.with(|x| {
-                                        x.fetch_add(1, Ordering::SeqCst);
-                                    });
-                                }
-                                None => (),
-                            }
-                            stream
-                        })
-                })).and_then(move |subscribers| {
-                    Ok(((publisher, subscribers, n + 1), n + 1 < number_of_messages))
-                })
-            })
-        }).and_then(|(publisher, subscribers, _)| {
-            println!("shutting down");
-            try!(publisher.shutdown(::std::net::Shutdown::Write));
-            for sub in &subscribers {
-                try!(sub.shutdown(::std::net::Shutdown::Write));
-            }
-            Ok((publisher, subscribers))
-        }).and_then(|(publisher, subscribers)| {
-            read_until_eof(publisher).join(
-                All::new(subscribers.into_iter().map(|sub| {
-                    read_until_eof(sub)
-                })))
-        }).map(move |_| successful_message_count.with(|x| x.load(Ordering::SeqCst)))
     }))
 }
 
@@ -669,8 +542,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
 
 
     let mut futures = Vec::new();
-    for _ in 0..1 {
-        futures.push(pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 15000, 3)));
+    for _ in 0..2 {
+        futures.push(new_tasks(&handle, &pool, &addr, connection_id_source.clone(), 100, 3));
     }
     let f = ::all::All::new(futures.into_iter());
 
