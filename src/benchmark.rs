@@ -237,6 +237,7 @@ struct ReadTaskWaitFor {
     prefix: Vec<u8>,
     complete: Complete<Vec<u8>>,
     timeout_ticks: u64,
+    count: bool,
 }
 
 type ChannelElem = ReadTaskWaitFor;
@@ -312,8 +313,11 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
                     };
                     match aa {
                         Some(A::Matches) => {
-                            self.number_successfully_read += 1;
                             let waiting_for = self.waiting_for.take().unwrap();
+                            if waiting_for.count {
+                                self.number_successfully_read += 1;
+                            }
+
                             waiting_for.complete.complete(message);
                         }
                         Some(A::TimedOut) => {
@@ -375,6 +379,7 @@ fn initialize_subscribers(
                         prefix: buf,
                         complete: complete,
                         timeout_ticks: 2,
+                        count: false,
                     };
 
                     try!(sender.send(wait_for));
@@ -436,6 +441,7 @@ fn run_publisher(
                         prefix: prefix.clone(),
                         complete: complete,
                         timeout_ticks: 2,
+                        count: true,
                     };
                     try!(senders[idx].send(wait_for))
                 }
@@ -520,8 +526,6 @@ pub fn run() -> Result<(), ::std::io::Error> {
         .expect("parsing 'messages'");
     let executable = matches.value_of("EXECUTABLE").unwrap();
 
-    println!("exectuable: {}", executable);
-
     let addr_str = matches.value_of("server").unwrap();
     let addr = match addr_str.parse::<::std::net::SocketAddr>() {
         Ok(a) => a,
@@ -529,6 +533,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
             panic!("failed to parse socket address {}", e);
         }
     };
+
+    println!("running {} at address {}", executable, addr_str);
 
     let mut child = try!(::std::process::Command::new(executable)
         .arg(addr_str)
@@ -604,8 +610,11 @@ pub fn run() -> Result<(), ::std::io::Error> {
 
     let read_tasks = pool.spawn(read_tasks);
 
-    let x = try!(core.run(read_tasks.join(write_tasks)));
-    println!("x = {:?}", x);
+    let (successfully_received, _) = try!(core.run(read_tasks.join(write_tasks)));
+    let number_sent = number_of_publishers * number_of_subscribers * number_of_messages;
+    println!("successfully received {} messages out of {} sent (= drop rate of {})",
+             successfully_received, number_sent,
+             (number_sent - successfully_received) as f64 / number_sent as f64);
 
     Ok(())
 }
