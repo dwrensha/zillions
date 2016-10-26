@@ -16,6 +16,16 @@ use std::cell::{Cell};
 use std::rc::Rc;
 use std::time::Duration;
 
+macro_rules! fry {
+    ($expr:expr) => (
+        match $expr {
+            ::std::result::Result::Ok(val) => val,
+            ::std::result::Result::Err(err) => {
+                return Box::new(::futures::failed(::std::convert::From::from(err)))
+            }
+        })
+}
+
 mod all {
     use futures::{Async, Poll, Future};
     enum ElemState<T> where T: Future {
@@ -223,37 +233,36 @@ impl ConnectionIdSource {
 
 static CLOCK_PREFIX: &'static [u8] = &[0,0,0,0,0,0,0,0];
 
-struct ReadStreamWaitFor {
+struct ReadTaskWaitFor {
     prefix: Vec<u8>,
     complete: Complete<Vec<u8>>,
     timeout_ticks: u64,
 }
 
-type ChannelElem = ReadStreamWaitFor;
+type ChannelElem = ReadTaskWaitFor;
 
-struct ReadStream<R> where R: ::std::io::Read {
+struct ReadTask<R> where R: ::std::io::Read {
     in_progress: Reading<R>,
     ticks_elapsed: u64,
     number_successfully_read: u64,
     receiver: ::tokio_core::channel::Receiver<ChannelElem>,
-    waiting_for: Option<ReadStreamWaitFor>
+    waiting_for: Option<ReadTaskWaitFor>
 }
 
-impl <R> ReadStream<R> where R: ::std::io::Read {
-    fn new(handle: &::tokio_core::reactor::Handle, reader: R)
-           -> ::std::io::Result<(::tokio_core::channel::Sender<ChannelElem>, ReadStream<R>)> {
-        let (sender, receiver) = try!(::tokio_core::channel::channel(handle));
-        Ok((sender, ReadStream {
+impl <R> ReadTask<R> where R: ::std::io::Read {
+    fn new(reader: R, receiver: ::tokio_core::channel::Receiver<ChannelElem>)
+           -> ReadTask<R> {
+        ReadTask {
             in_progress: Reading::new(reader),
             ticks_elapsed: 0,
             number_successfully_read: 0,
             receiver: receiver,
             waiting_for: None,
-        }))
+        }
     }
 }
 
-impl <R> Future for ReadStream<R> where R: ::std::io::Read {
+impl <R> Future for ReadTask<R> where R: ::std::io::Read {
     type Item = u64; // Total number of messages received.
     type Error = ::std::io::Error;
 
@@ -286,7 +295,7 @@ impl <R> Future for ReadStream<R> where R: ::std::io::Read {
                         TimedOut,
                     }
                     let aa = match self.waiting_for {
-                        Some(ReadStreamWaitFor { ref prefix, ref mut timeout_ticks, .. }) => {
+                        Some(ReadTaskWaitFor { ref prefix, ref mut timeout_ticks, .. }) => {
                             let len = prefix.len();
                             if &message[0..len] == &prefix[..] {
                                 Some(A::Matches)
@@ -322,6 +331,52 @@ impl <R> Future for ReadStream<R> where R: ::std::io::Read {
         }
     }
 }
+
+fn new_tasks(handle: &::tokio_core::reactor::Handle,
+             pool: &::futures_cpupool::CpuPool,
+             addr: &::std::net::SocketAddr,
+             connection_id_source: ConnectionIdSource,
+             number_of_messages: u64,
+             number_of_subscribers: u64)
+            -> Box<Future<Item=(), Error=::std::io::Error>>
+{
+    use all::All;
+
+    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
+    let publisher_id = connection_id_source.next();
+
+    let mut subscribers = Vec::new();
+    for _ in 0..number_of_subscribers {
+        let subscriber_id = connection_id_source.next();
+
+        let pool1 = pool.clone();
+        let handle1 = handle.clone();
+
+        let (sender, receiver) = fry!(::tokio_core::channel::channel(handle));
+
+        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
+
+
+            pool.spawn(futures::finished(()).and_then(move |()| -> Result<(), ()> {
+                use tokio_core::io::Io;
+                let (reader, writer) = socket.split();
+                let read_task = ReadTask::new(reader, receiver);
+//                unimplemented!()
+                Ok(())
+            }));
+//            let mut buf = [0; 8];
+//            <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
+//            Writing::new(socket, buf).and_then(move |socket| {
+//                read_until_message_with_prefix(socket, buf, 2)
+//                    .map(|(socket, _message)| { socket })
+//            })
+            Ok(())
+        }));
+    }
+
+    unimplemented!()
+}
+
 
 fn read_until_message_with_prefix<R, B>(
     reader: R,
