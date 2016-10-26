@@ -516,6 +516,13 @@ pub fn run() -> Result<(), ::std::io::Error> {
              .value_name("count")
              .default_value("1000")
              .help("number of messages to send from each publisher"))
+        .arg(Arg::with_name("repetitions")
+             .required(false)
+             .long("repetitions")
+             .short("r")
+             .value_name("count")
+             .default_value("100")
+             .help("number of repetitions"))
         .get_matches();
 
     let number_of_publishers = matches.value_of("publishers").unwrap().parse::<u64>()
@@ -524,6 +531,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
         .expect("parsing 'subscribers'");
     let number_of_messages = matches.value_of("messages").unwrap().parse::<u64>()
         .expect("parsing 'messages'");
+    let number_of_repetitions = matches.value_of("repetitions").unwrap().parse::<u64>()
+        .expect("parsing 'repetitions'");
     let executable = matches.value_of("EXECUTABLE").unwrap();
 
     let addr_str = matches.value_of("server").unwrap();
@@ -535,8 +544,6 @@ pub fn run() -> Result<(), ::std::io::Error> {
     };
 
     println!("running {} at address {}", executable, addr_str);
-    println!("launching {} publishers, each sending {} messages to {} subscribers...",
-              number_of_publishers, number_of_messages, number_of_subscribers);
 
     let mut child = try!(::std::process::Command::new(executable)
         .arg(addr_str)
@@ -566,58 +573,67 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let pool = ::futures_cpupool::CpuPool::new_num_cpus();
     let connection_id_source = ConnectionIdSource::new();
 
-    // Start a connection whose sole job is to send periodic "tick" messages.
-    let clock_connection = ::tokio_core::net::TcpStream::connect(&addr, &handle);
-    let handle1 = handle.clone();
-    handle.spawn(clock_connection.and_then(move |stream| {
-        tie_knot((stream, handle1), move |(stream, handle)| {
-            use tokio_core::reactor::Timeout;
-            Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
-                Writing::new(stream, CLOCK_PREFIX).map(move |stream| {
-                    ((stream, handle), true)
+    for iter_num in 0..number_of_repetitions {
+        println!(
+            "iteration {} out of {}: launching {} publishers, each sending {} messages to {} subscribers...",
+            iter_num, number_of_repetitions,
+            number_of_publishers, number_of_messages, number_of_subscribers);
+
+        // Start a connection whose sole job is to send periodic "tick" messages.
+        let clock_connection = ::tokio_core::net::TcpStream::connect(&addr, &handle);
+        let handle1 = handle.clone();
+        handle.spawn(clock_connection.and_then(move |stream| {
+            tie_knot((stream, handle1), move |(stream, handle)| {
+                use tokio_core::reactor::Timeout;
+                Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
+                    Writing::new(stream, CLOCK_PREFIX).map(move |stream| {
+                        ((stream, handle), true)
+                    })
                 })
             })
-        })
-    }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
+        }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
 
-
-    let mut init_futures = Vec::new();
-    let mut read_tasks = Vec::new();
-    for _ in 0..number_of_publishers {
-        let (number_read, senders) =
-            try!(initialize_subscribers(
-                &handle, &pool, &addr, connection_id_source.clone(), number_of_subscribers));
-        init_futures.push(senders);
-        read_tasks.push(number_read);
-    }
-
-    let read_tasks = ::all::All::new(read_tasks.into_iter()).map(|num_reads| {
-        let mut sum = 0;
-        for idx in 0..num_reads.len() {
-            sum += num_reads[idx];
+        let mut init_futures = Vec::new();
+        let mut read_tasks = Vec::new();
+        for _ in 0..number_of_publishers {
+            let (number_read, senders) =
+                try!(initialize_subscribers(
+                    &handle, &pool, &addr, connection_id_source.clone(), number_of_subscribers));
+            init_futures.push(senders);
+            read_tasks.push(number_read);
         }
-        sum
-    });
 
-    let handle1 = handle.clone();
-    let pool1 = pool.clone();
-    let write_tasks = ::all::All::new(init_futures.into_iter()).and_then(move |ss| {
-        let mut publishers = Vec::new();
-        for senders in ss.into_iter() {
-            publishers.push(
-                run_publisher(&handle1, &pool1, &addr, connection_id_source.clone(), number_of_messages, senders));
-        }
-        ::all::All::new(publishers.into_iter())
-    });
+        let read_tasks = ::all::All::new(read_tasks.into_iter()).map(|num_reads| {
+            let mut sum = 0;
+            for idx in 0..num_reads.len() {
+                sum += num_reads[idx];
+            }
+            sum
+        });
 
-    let read_tasks = pool.spawn(read_tasks);
+        let handle1 = handle.clone();
+        let pool1 = pool.clone();
+        let connection_id_source1 = connection_id_source.clone();
+        let write_tasks = ::all::All::new(init_futures.into_iter()).and_then(move |ss| {
+            let mut publishers = Vec::new();
+            for senders in ss.into_iter() {
+                publishers.push(
+                    run_publisher(
+                        &handle1, &pool1, &addr, connection_id_source1.clone(), number_of_messages, senders));
+            }
+            ::all::All::new(publishers.into_iter())
+        });
 
-    let (successfully_received, _) = try!(core.run(read_tasks.join(write_tasks)));
-    let number_sent = number_of_publishers * number_of_subscribers * number_of_messages;
-    println!("successfully received {} messages out of {} sent (= drop rate of {})",
-             successfully_received, number_sent,
+        let read_tasks = pool.spawn(read_tasks);
+
+        let (successfully_received, _) = try!(core.run(read_tasks.join(write_tasks)));
+        let number_sent = number_of_publishers * number_of_subscribers * number_of_messages;
+        println!("successfully received {} messages out of {} sent (= drop rate of {})",
+                 successfully_received, number_sent,
              (number_sent - successfully_received) as f64 / number_sent as f64);
 
+        println!("");
+    }
     Ok(())
 }
 
