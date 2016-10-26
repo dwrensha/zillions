@@ -82,7 +82,6 @@ pub fn main() {
         Rc::new(RefCell::new(Slab::with_capacity(1024)));
 
     let done = socket.incoming().for_each(move |(socket, _addr)| {
-
         let subscribers = subscribers.clone();
 
         let future = futures::lazy(|| Ok(socket.split())).and_then(|(reader, writer)| {

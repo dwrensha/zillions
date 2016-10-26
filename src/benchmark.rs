@@ -243,7 +243,6 @@ type ChannelElem = ReadTaskWaitFor;
 
 struct ReadTask<R> where R: ::std::io::Read {
     in_progress: Reading<R>,
-    ticks_elapsed: u64,
     number_successfully_read: u64,
     receiver: ::tokio_core::channel::Receiver<ChannelElem>,
     waiting_for: Option<ReadTaskWaitFor>
@@ -254,7 +253,6 @@ impl <R> ReadTask<R> where R: ::std::io::Read {
            -> ReadTask<R> {
         ReadTask {
             in_progress: Reading::new(reader),
-            ticks_elapsed: 0,
             number_successfully_read: 0,
             receiver: receiver,
             waiting_for: None,
@@ -332,18 +330,18 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
     }
 }
 
-fn new_tasks(handle: &::tokio_core::reactor::Handle,
-             pool: &::futures_cpupool::CpuPool,
-             addr: &::std::net::SocketAddr,
-             connection_id_source: ConnectionIdSource,
-             number_of_messages: u64,
-             number_of_subscribers: u64)
-            -> Box<Future<Item=u64, Error=::std::io::Error>>
+fn initialize_subscribers(
+    handle: &::tokio_core::reactor::Handle,
+    pool: &::futures_cpupool::CpuPool,
+    addr: &::std::net::SocketAddr,
+    connection_id_source: ConnectionIdSource,
+    number_of_subscribers: u64)
+    -> Result<(Box<Future<Item=u64, Error=::std::io::Error>>,
+               Box<Future<Item=Vec<Option<::tokio_core::channel::Sender<ChannelElem>>>,
+                          Error=::std::io::Error>>),
+              ::std::io::Error>
 {
     use all::All;
-
-    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
-    let publisher_id = connection_id_source.next();
 
     let mut subscriber_read_tasks = Vec::new();
     let mut subscriber_senders = Vec::new();
@@ -351,7 +349,7 @@ fn new_tasks(handle: &::tokio_core::reactor::Handle,
         let subscriber_id = connection_id_source.next();
 
         let pool1 = pool.clone();
-        let (sender, receiver) = fry!(::tokio_core::channel::channel(handle));
+        let (sender, receiver) = try!(::tokio_core::channel::channel(handle));
         let (sender_complete, sender_oneshot) = ::futures::oneshot();
 
         subscriber_senders.push(sender_oneshot.then(|r| match r {
@@ -396,13 +394,34 @@ fn new_tasks(handle: &::tokio_core::reactor::Handle,
         }));
     }
 
-    let read_tasks = All::new(subscriber_read_tasks.into_iter());
+    let read_tasks = All::new(subscriber_read_tasks.into_iter()).and_then(move |read_values| {
+        let mut sum = 0;
+        for idx in 0..read_values.len() {
+            sum += read_values[idx];
+        }
+        Ok(sum)
+    });
+
     let senders = All::new(subscriber_senders.into_iter());
+    Ok((Box::new(read_tasks), Box::new(senders)))
+}
 
-    // Now write the messages...
+fn run_publisher(
+    handle: &::tokio_core::reactor::Handle,
+    pool: &::futures_cpupool::CpuPool,
+    addr: &::std::net::SocketAddr,
+    connection_id_source: ConnectionIdSource,
+    number_of_messages: u64,
+    senders: Vec<Option<::tokio_core::channel::Sender<ChannelElem>>>)
+    -> Box<Future<Item=(), Error=::std::io::Error>>
+{
+    let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
+    let publisher_id = connection_id_source.next();
 
-    let write_task = pool.spawn(publisher.join(senders).and_then(move |(publisher, senders)| {
+    Box::new(pool.spawn(publisher.and_then(move |publisher| {
+        println!("publisher connected");
         tie_knot((publisher, senders, 0u64), move |(publisher, mut senders, n)| {
+            println!("looping {}", n);
             ::futures::finished(()).and_then(move |()| {
                 let mut buf = vec![255; 16];
                 let mut prefix = vec![0; 8];
@@ -440,16 +459,7 @@ fn new_tasks(handle: &::tokio_core::reactor::Handle,
                 })
             })
         })
-    }).map(|(_writer, _senders, _n)| ()));
-
-
-    Box::new(write_task.join(read_tasks).and_then(move |(_, read_values)| {
-        let mut sum = 0;
-        for idx in 0..read_values.len() {
-            sum += read_values[idx];
-        }
-        Ok(sum)
-    }))
+    }).map(|(_writer, _senders, _n)| ())))
 }
 
 struct ChildProcess {
@@ -541,15 +551,33 @@ pub fn run() -> Result<(), ::std::io::Error> {
     }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
 
 
-    let mut futures = Vec::new();
-    for _ in 0..2 {
-        futures.push(new_tasks(&handle, &pool, &addr, connection_id_source.clone(), 100, 3));
+    let mut init_futures = Vec::new();
+    let mut read_tasks = Vec::new();
+    for _ in 0..1 {
+        let (number_read, senders) = try!(initialize_subscribers(&handle, &pool, &addr, connection_id_source.clone(), 1));
+        init_futures.push(senders);
+        read_tasks.push(number_read);
     }
-    let f = ::all::All::new(futures.into_iter());
 
-    //let f = pool.spawn(new_task(&handle, &addr, connection_id_source.clone(), 50, 3));
+    let read_tasks = ::all::All::new(read_tasks.into_iter()).map(|num_reads| {
+        let mut sum = 0;
+        for idx in 0..num_reads.len() {
+            sum += num_reads[idx];
+        }
+        sum
+    });
 
-    let x = try!(core.run(f));
+    let handle1 = handle.clone();
+    let write_tasks = ::all::All::new(init_futures.into_iter()).and_then(move |ss| {
+        println!("inited");
+        let mut publishers = Vec::new();
+        for senders in ss.into_iter() {
+            publishers.push(run_publisher(&handle1, &pool, &addr, connection_id_source.clone(), 100, senders));
+        }
+        ::all::All::new(publishers.into_iter())
+    });
+
+    let x = try!(core.run(read_tasks.join(write_tasks)));
     println!("x = {:?}", x);
 
     Ok(())
