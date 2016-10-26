@@ -263,7 +263,7 @@ impl <R> ReadTask<R> where R: ::std::io::Read {
 }
 
 impl <R> Future for ReadTask<R> where R: ::std::io::Read {
-    type Item = u64; // Total number of messages received.
+    type Item = u64; // Total number of matching messages received.
     type Error = ::std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -338,43 +338,118 @@ fn new_tasks(handle: &::tokio_core::reactor::Handle,
              connection_id_source: ConnectionIdSource,
              number_of_messages: u64,
              number_of_subscribers: u64)
-            -> Box<Future<Item=(), Error=::std::io::Error>>
+            -> Box<Future<Item=u64, Error=::std::io::Error>>
 {
     use all::All;
 
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
     let publisher_id = connection_id_source.next();
 
-    let mut subscribers = Vec::new();
+    let mut subscriber_read_tasks = Vec::new();
+    let mut subscriber_senders = Vec::new();
     for _ in 0..number_of_subscribers {
         let subscriber_id = connection_id_source.next();
 
         let pool1 = pool.clone();
-        let handle1 = handle.clone();
-
         let (sender, receiver) = fry!(::tokio_core::channel::channel(handle));
+        let (sender_complete, sender_oneshot) = ::futures::oneshot();
 
-        subscribers.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
-
-
-            pool.spawn(futures::finished(()).and_then(move |()| -> Result<(), ()> {
+        subscriber_senders.push(sender_oneshot.then(|r| match r {
+            Ok(v) => Ok(Some(v)),
+            Err(_) => Ok(None),
+        }));
+        subscriber_read_tasks.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
+            pool1.spawn(futures::finished(()).and_then(move |()|  {
                 use tokio_core::io::Io;
                 let (reader, writer) = socket.split();
                 let read_task = ReadTask::new(reader, receiver);
-//                unimplemented!()
-                Ok(())
-            }));
-//            let mut buf = [0; 8];
-//            <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
-//            Writing::new(socket, buf).and_then(move |socket| {
-//                read_until_message_with_prefix(socket, buf, 2)
-//                    .map(|(socket, _message)| { socket })
-//            })
-            Ok(())
+
+                let sender_init = futures::finished(()).and_then(move |()| {
+                    let mut buf = vec![0; 8];
+                    <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
+                    let writing = Writing::new(writer, buf.clone());
+
+                    let (complete, oneshot) = ::futures::oneshot();
+
+                    let wait_for = ReadTaskWaitFor {
+                        prefix: buf,
+                        complete: complete,
+                        timeout_ticks: 2,
+                    };
+
+                    try!(sender.send(wait_for));
+
+                    Ok((oneshot, writing, sender))
+                }).and_then(move |(oneshot, writing, sender)| {
+                    oneshot.then(move |r| match r {
+                        Ok(_) => Ok(true),
+                        Err(::futures::Canceled) => Ok(false)
+                    }).join(writing).map(move |(succeeded, _writer)| {
+                        if succeeded {
+                            sender_complete.complete(sender);
+                        }
+                    })
+                });
+
+                read_task.join(sender_init)
+            })).map(|(n, _)| n)
         }));
     }
 
-    unimplemented!()
+    let read_tasks = All::new(subscriber_read_tasks.into_iter());
+    let senders = All::new(subscriber_senders.into_iter());
+
+    // Now write the messages...
+
+    let write_task = pool.spawn(publisher.join(senders).and_then(move |(publisher, senders)| {
+        tie_knot((publisher, senders, 0u64), move |(publisher, mut senders, n)| {
+            ::futures::finished(()).and_then(move |()| {
+                let mut buf = vec![255; 16];
+                let mut prefix = vec![0; 8];
+                <LittleEndian as ByteOrder>::write_u64(&mut buf[..8], publisher_id);
+                <LittleEndian as ByteOrder>::write_u64(&mut prefix[..], publisher_id);
+
+                let mut dones = Vec::new();
+                for idx in 0..senders.len() {
+                    match senders[idx] {
+                        Some(ref mut sender) => {
+                            let (complete, oneshot) = ::futures::oneshot();
+                            dones.push(oneshot);
+                            let wait_for = ReadTaskWaitFor {
+                                prefix: prefix.clone(),
+                                complete: complete,
+                                timeout_ticks: 2,
+                            };
+                            try!(sender.send(wait_for))
+                        }
+                        None => (),
+                    }
+                }
+
+                let writing = Writing::new(publisher, buf);
+                Ok((dones, writing, senders))
+            }).and_then(move |(dones, writing, senders)| {
+                use all::All;
+                let done = All::new(dones.into_iter()).then(|r| match r {
+                    Ok(_) => Ok(true),
+                    Err(_) => Ok(false),
+                });
+
+                writing.join(done).map(move |(writer, _done)| {
+                    ((writer, senders, n + 1), n + 1 < number_of_messages)
+                })
+            })
+        })
+    }));
+
+
+    Box::new(write_task.join(read_tasks).and_then(move |(_, read_values)| {
+        let mut sum = 0;
+        for idx in 0..read_values.len() {
+            sum += read_values[idx];
+        }
+        Ok(sum)
+    }))
 }
 
 
