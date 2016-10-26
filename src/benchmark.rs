@@ -535,6 +535,8 @@ pub fn run() -> Result<(), ::std::io::Error> {
     };
 
     println!("running {} at address {}", executable, addr_str);
+    println!("launching {} publishers, each sending {} messages to {} subscribers...",
+              number_of_publishers, number_of_messages, number_of_subscribers);
 
     let mut child = try!(::std::process::Command::new(executable)
         .arg(addr_str)
