@@ -11,7 +11,7 @@ directory. Please submit a pull request to add your own!
 ## specification
 
 The server is an executable with a single command-line argument indicating the IP address to listen on.
-The server runs forever, accepting and handling connections arriving on that address.
+The server runs forever, accepting and handling TCP connections arriving on that address.
 
 When the server is ready to receive connections, it prints a single line to stdout, of the form
 "listening on [address]".
