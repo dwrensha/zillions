@@ -91,7 +91,6 @@ fn handle_publisher(mut stream: SocketStream, messages_received: u64,
 fn handle_connection(stream: SocketStream,
                      subscribers: Rc<RefCell<Slab<WriteQueue>>>)
                      -> Promise<(), Error> {
-
     let read_stream = stream.clone();
 
     let write_queue = WriteQueue::new();
