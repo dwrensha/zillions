@@ -90,7 +90,7 @@ mod all {
     }
 }
 
-struct Knot<F, S, T, E>
+struct Loop<F, S, T, E>
     where F: Fn(S) -> T,
           T: Future<Item=(S, bool), Error=E>
 {
@@ -98,18 +98,18 @@ struct Knot<F, S, T, E>
     in_progress: T,
 }
 
-fn tie_knot<F, S, T, E>(initial_state: S, f: F) -> Knot<F, S, T, E>
+fn run_loop<F, S, T, E>(initial_state: S, f: F) -> Loop<F, S, T, E>
     where F: Fn(S) -> T,
           T: Future<Item=(S, bool), Error=E>,
 {
     let in_progress = f(initial_state);
-    Knot {
+    Loop {
         f: f,
         in_progress: in_progress,
     }
 }
 
-impl <F, S, T, E> Future for Knot<F, S, T, E>
+impl <F, S, T, E> Future for Loop<F, S, T, E>
     where F: Fn(S) -> T,
           T: Future<Item=(S, bool), Error=E>
 {
@@ -438,7 +438,7 @@ fn run_publisher(
     let rng: ::rand::XorShiftRng = ::rand::SeedableRng::from_seed([publisher_id as u32; 4]);
 
     Box::new(publisher.and_then(move |publisher| {
-        tie_knot((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
+        run_loop((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
             ::futures::finished(()).and_then(move |()| {
                 use rand::Rng;
 
@@ -598,7 +598,7 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let clock_connection = ::tokio_core::net::TcpStream::connect(&addr, &handle);
     let handle1 = handle.clone();
     handle.spawn(clock_connection.and_then(move |stream| {
-        tie_knot((stream, handle1), move |(stream, handle)| {
+        run_loop((stream, handle1), move |(stream, handle)| {
             use tokio_core::reactor::Timeout;
             Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
                 Writing::new(stream, CLOCK_PREFIX).map(move |stream| {
