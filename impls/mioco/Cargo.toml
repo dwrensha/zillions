@@ -1,0 +1,11 @@
+[package]
+name = "mioco-zillions"
+version = "0.1.0"
+authors = ["David Renshaw <david@sandstorm.io>"]
+
+[dependencies]
+mioco = "0.8"
+
+[[bin]]
+name="server"
+path="server.rs"
