@@ -3,11 +3,6 @@
 A toy chat server spec and some sample implementations,
 to help you choose among the many ways to write code to perform concurrent I/O.
 
-## contributing
-
-Implementations live in the [impls](https://github.com/dwrensha/zillions/tree/master/impls)
-directory. Please submit a pull request to add your own!
-
 ## specification
 
 The server is an executable with a single command-line argument indicating the IP address to listen on.
@@ -46,3 +41,16 @@ $ ./target/release/stresstest -a 127.0.0.1:55555 ./impls/gjio/target/release/ser
 ```
 cargo run --release --bin commandline-client
 ```
+
+## contributing
+
+Implementations live in the [impls](https://github.com/dwrensha/zillions/tree/master/impls)
+directory. Please submit a pull request to add your own!
+
+## wish list
+
+* [std::sync::mpsc::sync_channel()](https://doc.rust-lang.org/std/sync/mpsc/fn.sync_channel.html)
+* raw [mio](https://github.com/carllerche/mio)
+* [amy](https://github.com/andrewjstone/amy)
+* [libfringe](https://github.com/nathan7/libfringe)
+* [mioco](https://github.com/dpc/mioco)
