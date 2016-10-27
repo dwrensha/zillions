@@ -15,5 +15,5 @@ name="commandline-client"
 path="src/commandline-client.rs"
 
 [[bin]]
-name="benchmark"
-path="src/benchmark.rs"
+name="stresstest"
+path="src/stresstest.rs"

@@ -3,6 +3,11 @@
 A toy chat server spec and some sample implementations,
 to help you choose among the many ways to write code to perform concurrent I/O.
 
+## contributing
+
+Implementations live in the [impls](https://github.com/dwrensha/zillions/tree/master/impls)
+directory. Please submit a pull request to add your own!
+
 ## specification
 
 The server is an executable with a single command-line argument indicating the IP address to listen on.
@@ -27,4 +32,12 @@ Doing so may be necessary to prevent unbounded buffering in the case where the
 server receives messages faster than it can send them out.
 However, dropping too many messages may cause the server to receive lower scores in benchmark tests.
 
+## testing
 
+```
+cargo run --release --bin commandline-client
+```
+
+```
+cargo run --release --bin stresstest
+```
