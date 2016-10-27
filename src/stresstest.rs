@@ -1,5 +1,6 @@
 extern crate byteorder;
 extern crate clap;
+extern crate rand;
 
 #[macro_use]
 extern crate futures;
@@ -235,6 +236,7 @@ static CLOCK_PREFIX: &'static [u8] = &[0,0,0,0,0,0,0,0];
 
 struct ReadTaskWaitFor {
     prefix: Vec<u8>,
+    buf: Vec<u8>,
     complete: Complete<Vec<u8>>,
     timeout_ticks: u64,
     count: bool,
@@ -317,6 +319,11 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
                             if waiting_for.count {
                                 self.number_successfully_read += 1;
                             }
+                            if waiting_for.buf != message {
+                                return Err(::std::io::Error::new(
+                                    ::std::io::ErrorKind::Other,
+                                    format!("expected {:?} but received {:?}", waiting_for.buf, message)));
+                            }
 
                             waiting_for.complete.complete(message);
                         }
@@ -376,7 +383,8 @@ fn initialize_subscribers(
                     let (complete, oneshot) = ::futures::oneshot();
 
                     let wait_for = ReadTaskWaitFor {
-                        prefix: buf,
+                        prefix: buf.clone(),
+                        buf: buf,
                         complete: complete,
                         timeout_ticks: 2,
                         count: false,
@@ -425,10 +433,19 @@ fn run_publisher(
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
     let publisher_id = connection_id_source.next();
 
+    let rng: ::rand::XorShiftRng = ::rand::SeedableRng::from_seed([publisher_id as u32; 4]);
+
     Box::new(publisher.and_then(move |publisher| {
-        tie_knot((publisher, senders, 0u64), move |(publisher, senders, n)| {
+        tie_knot((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
             ::futures::finished(()).and_then(move |()| {
-                let mut buf = vec![255; 16];
+                use rand::Rng;
+
+                let buf_len = rng.gen_range(8, 256);
+                let mut buf = vec![0; buf_len];
+                for b in &mut buf[8..] {
+                   *b = rng.gen::<u8>();
+               }
+
                 let mut prefix = vec![0; 8];
                 <LittleEndian as ByteOrder>::write_u64(&mut buf[..8], publisher_id);
                 <LittleEndian as ByteOrder>::write_u64(&mut prefix[..], publisher_id);
@@ -439,6 +456,7 @@ fn run_publisher(
                     dones.push(oneshot);
                     let wait_for = ReadTaskWaitFor {
                         prefix: prefix.clone(),
+                        buf: buf.clone(),
                         complete: complete,
                         timeout_ticks: 2,
                         count: true,
@@ -447,8 +465,8 @@ fn run_publisher(
                 }
 
                 let writing = Writing::new(publisher, buf);
-                Ok((dones, writing, senders))
-            }).and_then(move |(dones, writing, senders)| {
+                Ok((dones, writing, senders, rng))
+            }).and_then(move |(dones, writing, senders, rng)| {
                 use all::All;
                 let done = All::new(dones.into_iter()).then(|r| match r {
                     Ok(_) => Ok(true),
@@ -456,11 +474,11 @@ fn run_publisher(
                 });
 
                 writing.join(done).map(move |(writer, _done)| {
-                    ((writer, senders, n + 1), n + 1 < number_of_messages)
+                    ((writer, senders, rng, n + 1), n + 1 < number_of_messages)
                 })
             })
         })
-    }).map(|(_writer, _senders, _n)| ()))
+    }).map(|(_writer, _senders, _rng, _n)| ()))
 }
 
 struct ChildProcess {
