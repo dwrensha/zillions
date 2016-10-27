@@ -34,6 +34,9 @@ However, dropping too many messages may cause the server to receive lower scores
 
 ## testing
 
+This repo includes some tools to allow you to test implementations and to compare
+their performance.
+
 ```
 $ cargo build --release
 $ cd impls/gjio && cargo build --release && cd ../..
