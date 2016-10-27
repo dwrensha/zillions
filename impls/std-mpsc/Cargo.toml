@@ -1,0 +1,11 @@
+[package]
+name = "std-mpsc-zillions"
+version = "0.1.0"
+authors = ["David Renshaw <david@sandstorm.io>"]
+
+[dependencies]
+# none!
+
+[[bin]]
+name="server"
+path="server.rs"

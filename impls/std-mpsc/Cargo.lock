@@ -1,0 +1,4 @@
+[root]
+name = "std-mpsc-zillions"
+version = "0.1.0"
+
