@@ -35,9 +35,11 @@ However, dropping too many messages may cause the server to receive lower scores
 ## testing
 
 ```
-cargo run --release --bin commandline-client
+$ cargo build --release
+$ cd impls/gjio && cargo build --release && cd ../..
+$ ./target/release/stresstest -a 127.0.0.1:55555 ./impls/gjio/target/release/server
 ```
 
 ```
-cargo run --release --bin stresstest
+cargo run --release --bin commandline-client
 ```
