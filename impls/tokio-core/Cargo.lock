@@ -3,7 +3,6 @@ name = "tokio-core-zillions"
 version = "0.1.0"
 dependencies = [
  "futures 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "slab 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-core 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
