@@ -322,7 +322,7 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
                             if waiting_for.buf != message {
                                 return Err(::std::io::Error::new(
                                     ::std::io::ErrorKind::Other,
-                                    format!("expected {:?} but received {:?}", waiting_for.buf, message)));
+                                    format!("expected: {:?}\n received: {:?}", waiting_for.buf, message)));
                             }
 
                             waiting_for.complete.complete(message);
@@ -390,7 +390,9 @@ fn initialize_subscribers(
                         count: false,
                     };
 
-                    try!(sender.send(wait_for));
+                    if let Err(e) = sender.send(wait_for) {
+                        println!("ERROR: failed to send on channel: {}", e);
+                    }
 
                     Ok((oneshot, writing, sender))
                 }).and_then(move |(oneshot, writing, sender)| {
@@ -461,7 +463,8 @@ fn run_publisher(
                         timeout_ticks: 2,
                         count: true,
                     };
-                    try!(senders[idx].send(wait_for))
+
+                    try!(senders[idx].send(wait_for));
                 }
 
                 let writing = Writing::new(publisher, buf);
@@ -644,8 +647,19 @@ pub fn run() -> Result<(), ::std::io::Error> {
         });
 
         let read_tasks = pool.spawn(read_tasks);
+        let write_tasks = write_tasks;
 
-        let (successfully_received, _) = try!(core.run(read_tasks.join(write_tasks)));
+        // We don't need to join `write_tasks` to `read_tasks` because `read_tasks` is running on the
+        // thread pool and will therefore be driven to completion as along as we don't drop it.
+        // We don't want to join `write_tasks` to `read_tasks` because doing so can hide informative
+        // errors from the read task with unhelpful errors from the write task like "failed to send
+        // on channel".
+        let write_result = core.run(write_tasks);
+        let successfully_received = try!(core.run(read_tasks));
+
+        if let Err(e) = write_result {
+            println!("error on write task {}", e);
+        }
 
         let end_time = ::std::time::Instant::now();
         let elapsed = end_time.duration_since(start_time);
@@ -664,5 +678,11 @@ pub fn run() -> Result<(), ::std::io::Error> {
 }
 
 pub fn main() {
-    run().expect("top level error");
+    match run() {
+        Ok(_) => (),
+        Err(e) => {
+            println!("error: {}", e);
+            ::std::process::exit(1);
+        }
+    }
 }
