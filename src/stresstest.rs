@@ -437,8 +437,11 @@ fn run_publisher(
 
     let rng: ::rand::XorShiftRng = ::rand::SeedableRng::from_seed([publisher_id as u32; 4]);
 
+    let pool = _pool.clone();
     Box::new(publisher.and_then(move |publisher| {
-        run_loop((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
+        println!("spawning");
+        pool.spawn(run_loop((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
+            println!("looping {}", n);
             ::futures::finished(()).and_then(move |()| {
                 use rand::Rng;
 
@@ -480,7 +483,7 @@ fn run_publisher(
                     ((writer, senders, rng, n + 1), n + 1 < number_of_messages)
                 })
             })
-        })
+        }))
     }).map(|(_writer, _senders, _rng, _n)| ()))
 }
 
