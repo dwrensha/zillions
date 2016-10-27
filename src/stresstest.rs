@@ -574,6 +574,7 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let connection_id_source = ConnectionIdSource::new();
 
     for iter_num in 0..number_of_repetitions {
+        let start_time = ::std::time::Instant::now();
         println!(
             "iteration {} out of {}: launching {} publishers, each sending {} messages to {} subscribers...",
             iter_num, number_of_repetitions,
@@ -627,10 +628,17 @@ pub fn run() -> Result<(), ::std::io::Error> {
         let read_tasks = pool.spawn(read_tasks);
 
         let (successfully_received, _) = try!(core.run(read_tasks.join(write_tasks)));
+
+        let end_time = ::std::time::Instant::now();
+        let elapsed = end_time.duration_since(start_time);
+        let elapsed_seconds =
+            elapsed.as_secs() as f64 + (elapsed.subsec_nanos() as f64 / 1e9);
+
         let number_sent = number_of_publishers * number_of_subscribers * number_of_messages;
         println!("successfully received {} messages out of {} sent (= drop rate of {})",
                  successfully_received, number_sent,
              (number_sent - successfully_received) as f64 / number_sent as f64);
+        println!("took {} seconds", elapsed_seconds);
 
         println!("");
     }
