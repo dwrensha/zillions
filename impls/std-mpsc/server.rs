@@ -62,7 +62,8 @@ fn run() -> Result<(), ::std::io::Error> {
                 }
                 InternalMessage::NewMessage(v) => {
                     for (_, tx) in &clients {
-                        tx.send(v.clone());
+                        // Try to send without blocking.
+                        let _ = tx.try_send(v.clone());
                     }
                 }
             }
