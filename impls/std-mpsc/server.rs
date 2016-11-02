@@ -71,9 +71,9 @@ fn run() -> Result<(), ::std::io::Error> {
 
     println!("listening on {}", addr_str);
     // accept connections and process them, spawning a new thread for each one
+    let mut count: u64 = 0;
     for stream in listener.incoming() {
         let tx = tx.clone();
-        let mut count: u64 = 0;
         match stream {
             Ok(stream) => {
                 let idx = count;
