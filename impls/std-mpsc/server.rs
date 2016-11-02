@@ -1,9 +1,9 @@
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 
 enum InternalMessage {
-    NewClient(u64, mpsc::SyncSender<Vec<u8>>),
-    ClientDisconnected(u64),
+    NewClient(SocketAddr, mpsc::SyncSender<Vec<u8>>),
+    ClientDisconnected(SocketAddr),
     NewMessage(Vec<u8>),
 }
 
@@ -51,17 +51,17 @@ fn run() -> Result<(), ::std::io::Error> {
     // start "global state" thread.
     ::std::thread::spawn(move || {
         let mut clients =
-            ::std::collections::HashMap::<u64, mpsc::SyncSender<Vec<u8>>>::new();
+            ::std::collections::HashMap::<SocketAddr, mpsc::SyncSender<Vec<u8>>>::new();
         loop {
             match rx.recv().expect("receive error") {
-                InternalMessage::NewClient(idx, s) => {
-                    clients.insert(idx, s);
+                InternalMessage::NewClient(addr, s) => {
+                    clients.insert(addr, s);
                 }
-                InternalMessage::ClientDisconnected(idx) => {
-                    clients.remove(&idx);
+                InternalMessage::ClientDisconnected(addr) => {
+                    clients.remove(&addr);
                 }
                 InternalMessage::NewMessage(v) => {
-                    for (idx, tx) in &clients {
+                    for (_, tx) in &clients {
                         tx.send(v.clone());
                     }
                 }
@@ -71,17 +71,14 @@ fn run() -> Result<(), ::std::io::Error> {
 
     println!("listening on {}", addr_str);
     // accept connections and process them, spawning a new thread for each one
-    let mut count: u64 = 0;
     for stream in listener.incoming() {
         let tx = tx.clone();
         match stream {
             Ok(stream) => {
-                let idx = count;
-                count += 1;
-
                 let (message_tx, message_rx) = mpsc::sync_channel(5);
 
-                tx.send(InternalMessage::NewClient(idx, message_tx));
+                let peer_addr = try!(stream.peer_addr());
+                tx.send(InternalMessage::NewClient(peer_addr, message_tx));
 
                 let read_stream = try!(stream.try_clone());
 
