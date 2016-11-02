@@ -54,8 +54,6 @@ illustrate a wide variety of concurrency styles. Below are listed some
 libraries that might be particularly interesting to try.
 
 - Rust
-  * [std::thread](https://doc.rust-lang.org/std/thread/index.html) with
-    [std::sync::mpsc](https://doc.rust-lang.org/std/sync/mpsc/)
   * raw [mio](https://github.com/carllerche/mio)
   * [amy](https://github.com/andrewjstone/amy)
   * [libfringe](https://github.com/nathan7/libfringe)
@@ -63,3 +61,6 @@ libraries that might be particularly interesting to try.
 - other languages
   * [curio](https://github.com/dabeaz/curio)
   * C\# [async/await](https://msdn.microsoft.com/en-us/library/mt674882.aspx)
+  * Goroutines
+  * [libmill](http://libmill.org/)
+  * Haskell
