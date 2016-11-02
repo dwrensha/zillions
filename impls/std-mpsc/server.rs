@@ -7,14 +7,31 @@ enum InternalMessage {
     NewMessage(Vec<u8>),
 }
 
-fn handle_client_read(mut stream: TcpStream, sender: mpsc::Sender<InternalMessage>) -> ::std::io::Result<()> {
+struct DisconnectNotifier {
+    peer_addr: SocketAddr,
+    tx: mpsc::Sender<InternalMessage>,
+}
+
+impl Drop for DisconnectNotifier {
+    fn drop(&mut self) {
+        let _ = self.tx.send(InternalMessage::ClientDisconnected(self.peer_addr));
+    }
+}
+
+fn handle_client_read(mut stream: TcpStream,
+                      sender: mpsc::Sender<InternalMessage>,
+                      peer_addr: SocketAddr)
+                      -> ::std::io::Result<()>
+{
     use std::io::Read;
+
+    let _notifer = DisconnectNotifier { peer_addr: peer_addr, tx: sender.clone() };
     loop {
         let mut buf = [0];
         try!(stream.read_exact(&mut buf[..]));
         let mut buf_body = vec![0; buf[0] as usize];
         try!(stream.read_exact(&mut buf_body[..]));
-        sender.send(InternalMessage::NewMessage(buf_body));
+        let _ = sender.send(InternalMessage::NewMessage(buf_body));
     }
 }
 
@@ -53,18 +70,22 @@ fn run() -> Result<(), ::std::io::Error> {
         let mut clients =
             ::std::collections::HashMap::<SocketAddr, mpsc::SyncSender<Vec<u8>>>::new();
         loop {
-            match rx.recv().expect("receive error") {
-                InternalMessage::NewClient(addr, s) => {
+            match rx.recv() {
+                Ok(InternalMessage::NewClient(addr, s)) => {
                     clients.insert(addr, s);
                 }
-                InternalMessage::ClientDisconnected(addr) => {
+                Ok(InternalMessage::ClientDisconnected(addr)) => {
                     clients.remove(&addr);
                 }
-                InternalMessage::NewMessage(v) => {
+                Ok(InternalMessage::NewMessage(v)) => {
                     for (_, tx) in &clients {
                         // Try to send without blocking.
                         let _ = tx.try_send(v.clone());
                     }
+                }
+                Err(_) => {
+                    // No senders left, so no more work to do.
+                    break;
                 }
             }
         }
@@ -79,22 +100,22 @@ fn run() -> Result<(), ::std::io::Error> {
                 let (message_tx, message_rx) = mpsc::sync_channel(5);
 
                 let peer_addr = try!(stream.peer_addr());
-                tx.send(InternalMessage::NewClient(peer_addr, message_tx));
+                let _ = tx.send(InternalMessage::NewClient(peer_addr, message_tx));
 
                 let read_stream = try!(stream.try_clone());
 
                 // start write thread
                 ::std::thread::spawn(move|| {
-                    handle_client_write(stream, message_rx)
+                    let _ = handle_client_write(stream, message_rx);
                 });
 
                 // start read thread
                 ::std::thread::spawn(move|| {
-                    handle_client_read(read_stream, tx);
+                    let _ = handle_client_read(read_stream, tx, peer_addr);
                 });
 
             }
-            Err(e) => { /* connection failed */ }
+            Err(_e) => { /* connection failed */ }
         }
     }
 
