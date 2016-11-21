@@ -59,7 +59,7 @@ mod all {
                 let done_val = match &mut self.elems[idx] {
                     &mut ElemState::Pending(ref mut t) => {
                         match t.poll() {
-                            Ok(Async::Ready(t)) => t,
+                            Ok(Async::Ready(t)) => Ok(t),
                             Ok(Async::NotReady) => {
                                 all_done = false;
                                 continue
@@ -70,7 +70,13 @@ mod all {
                     &mut ElemState::Done(ref mut _v) => continue,
                 };
 
-                self.elems[idx] = ElemState::Done(done_val);
+                match done_val {
+                    Ok(v) => self.elems[idx] = ElemState::Done(v),
+                    Err(e) => {
+                        self.elems = Vec::new();
+                        return Err(e)
+                    }
+                }
             }
 
             if all_done {
