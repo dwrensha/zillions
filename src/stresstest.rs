@@ -10,6 +10,7 @@ extern crate futures_cpupool;
 extern crate tokio_core;
 
 use futures::{Async, Poll, Future, Complete, future};
+use tokio_core::net::TcpStream;
 
 use byteorder::{LittleEndian, ByteOrder};
 
@@ -25,75 +26,6 @@ macro_rules! fry {
                 return Box::new(::futures::failed(::std::convert::From::from(err)))
             }
         })
-}
-
-mod all {
-    use futures::{Async, Poll, Future};
-    enum ElemState<T> where T: Future {
-        Pending(T),
-        Done(T::Item),
-    }
-
-    pub struct All<T> where T: Future {
-        elems: Vec<ElemState<T>>,
-    }
-
-    impl <T> All<T> where T: Future {
-        pub fn new<I>(futures: I) -> All<T> where I: Iterator<Item=T> {
-            let mut result = All { elems: Vec::new() };
-            for f in futures {
-                result.elems.push(ElemState::Pending(f))
-            }
-            result
-        }
-    }
-
-    impl <T> Future for All<T> where T: Future {
-        type Item = Vec<T::Item>;
-        type Error = T::Error;
-
-        fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-            let mut all_done = true;
-
-            for idx in 0 .. self.elems.len() {
-                let done_val = match &mut self.elems[idx] {
-                    &mut ElemState::Pending(ref mut t) => {
-                        match t.poll() {
-                            Ok(Async::Ready(t)) => Ok(t),
-                            Ok(Async::NotReady) => {
-                                all_done = false;
-                                continue
-                            }
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    &mut ElemState::Done(ref mut _v) => continue,
-                };
-
-                match done_val {
-                    Ok(v) => self.elems[idx] = ElemState::Done(v),
-                    Err(e) => {
-                        self.elems = Vec::new();
-                        return Err(e)
-                    }
-                }
-            }
-
-            if all_done {
-                let mut result = Vec::new();
-                let elems = ::std::mem::replace(&mut self.elems, Vec::new());
-                for e in elems.into_iter() {
-                    match e {
-                        ElemState::Done(t) => result.push(t),
-                        _ => unreachable!(),
-                    }
-                }
-                Ok(Async::Ready(result))
-            } else {
-                Ok(Async::NotReady)
-            }
-        }
-    }
 }
 
 struct Loop<F, S, T, E>
@@ -358,9 +290,10 @@ fn initialize_subscribers(
                           Error=::std::io::Error>>),
               ::std::io::Error>
 {
-    use all::All;
+    // Box these things to avoid the weird error:
+    // `error: reached the recursion limit during monomorphization (selection ambiguity)`
+    let mut subscriber_read_tasks: Vec<Box<Future<Item=u64,Error=::std::io::Error> + Send>> = Vec::new();
 
-    let mut subscriber_read_tasks = Vec::new();
     let mut subscriber_senders: Option<Box<Future<Item=Vec<::tokio_core::channel::Sender<ChannelElem>>,
                                                   Error=::std::io::Error> + Send>> =
         Some(Box::new(futures::finished(Vec::new())));
@@ -375,7 +308,7 @@ fn initialize_subscribers(
             ::std::io::Error::new(::std::io::ErrorKind::Other,"canceled")
         })));
 
-        subscriber_read_tasks.push(::tokio_core::net::TcpStream::connect(addr, handle).and_then(move |socket| {
+        subscriber_read_tasks.push(Box::new(TcpStream::connect(addr, handle).and_then(move |socket| {
             subscriber_senders1.and_then(move |mut subscriber_senders|  {
                 use tokio_core::io::Io;
                 let (reader, writer) = socket.split();
@@ -415,10 +348,10 @@ fn initialize_subscribers(
 
                 read_task.join(sender_init)
             }).map(|(n, _)| n)
-        }));
+        })));
     }
 
-    let read_tasks = All::new(subscriber_read_tasks.into_iter()).and_then(move |read_values| {
+    let read_tasks = future::join_all(subscriber_read_tasks).and_then(move |read_values| {
         let mut sum = 0;
         for idx in 0..read_values.len() {
             sum += read_values[idx];
