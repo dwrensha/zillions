@@ -23,7 +23,7 @@ macro_rules! fry {
         match $expr {
             ::std::result::Result::Ok(val) => val,
             ::std::result::Result::Err(err) => {
-                return Box::new(::futures::failed(::std::convert::From::from(err)))
+                return Box::new(future::err(::std::convert::From::from(err)))
             }
         })
 }
@@ -296,7 +296,7 @@ fn initialize_subscribers(
 
     let mut subscriber_senders: Option<Box<Future<Item=Vec<::tokio_core::channel::Sender<ChannelElem>>,
                                                   Error=::std::io::Error> + Send>> =
-        Some(Box::new(futures::finished(Vec::new())));
+        Some(Box::new(future::ok(Vec::new())));
     for _ in 0..number_of_subscribers {
         let subscriber_id = connection_id_source.next();
 
@@ -314,7 +314,7 @@ fn initialize_subscribers(
                 let (reader, writer) = socket.split();
                 let read_task = ReadTask::new(reader, receiver);
 
-                let sender_init = futures::finished(()).and_then(move |()| {
+                let sender_init = future::ok(()).and_then(move |()| {
                     let mut buf = vec![0; 8];
                     <LittleEndian as ByteOrder>::write_u64(&mut buf[..], subscriber_id);
                     let writing = Writing::new(writer, buf.clone());
@@ -378,7 +378,7 @@ fn run_publisher(
 
     Box::new(publisher.and_then(move |publisher| {
         run_loop((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
-            ::futures::finished(()).and_then(move |()| {
+            future::ok(()).and_then(move |()| {
                 use rand::Rng;
 
                 let buf_len = rng.gen_range(8, 256);
