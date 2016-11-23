@@ -9,7 +9,7 @@ extern crate futures_cpupool;
 #[macro_use]
 extern crate tokio_core;
 
-use futures::{Async, Poll, Future, Complete};
+use futures::{Async, Poll, Future, Complete, future};
 
 use byteorder::{LittleEndian, ByteOrder};
 
@@ -476,8 +476,7 @@ fn run_publisher(
                 let writing = Writing::new(publisher, buf);
                 Ok((dones, writing, senders, rng))
             }).and_then(move |(dones, writing, senders, rng)| {
-                use all::All;
-                let done = All::new(dones.into_iter()).then(|r| match r {
+                let done = future::join_all(dones.into_iter()).then(|r| match r {
                     Ok(_) => Ok(true),
                     Err(_) => Ok(false),
                 });
@@ -631,7 +630,7 @@ pub fn run() -> Result<(), ::std::io::Error> {
             read_tasks.push(number_read);
         }
 
-        let read_tasks = ::all::All::new(read_tasks.into_iter()).map(|num_reads| {
+        let read_tasks = future::join_all(read_tasks).map(|num_reads| {
             let mut sum = 0;
             for idx in 0..num_reads.len() {
                 sum += num_reads[idx];
@@ -642,14 +641,14 @@ pub fn run() -> Result<(), ::std::io::Error> {
         let handle1 = handle.clone();
         let pool1 = pool.clone();
         let connection_id_source1 = connection_id_source.clone();
-        let write_tasks = ::all::All::new(init_futures.into_iter()).and_then(move |ss| {
+        let write_tasks = future::join_all(init_futures).and_then(move |ss| {
             let mut publishers = Vec::new();
             for senders in ss.into_iter() {
                 publishers.push(
                     run_publisher(
                         &handle1, &pool1, &addr, connection_id_source1.clone(), number_of_messages, senders));
             }
-            ::all::All::new(publishers.into_iter())
+            future::join_all(publishers)
         });
 
         let read_tasks = pool.spawn(read_tasks);
