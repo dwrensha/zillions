@@ -185,12 +185,12 @@ type ChannelElem = ReadTaskWaitFor;
 struct ReadTask<R> where R: ::std::io::Read {
     in_progress: Reading<R>,
     number_successfully_read: u64,
-    receiver: ::tokio_core::channel::Receiver<ChannelElem>,
+    receiver: ::futures::sync::mpsc::UnboundedReceiver<ChannelElem>,
     waiting_for: Option<ReadTaskWaitFor>
 }
 
 impl <R> ReadTask<R> where R: ::std::io::Read {
-    fn new(reader: R, receiver: ::tokio_core::channel::Receiver<ChannelElem>)
+    fn new(reader: R, receiver: ::futures::sync::mpsc::UnboundedReceiver<ChannelElem>)
            -> ReadTask<R> {
         ReadTask {
             in_progress: Reading::new(reader),
@@ -218,8 +218,8 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
                         return Ok(Async::Ready(self.number_successfully_read))
                     }
                     Ok(Async::NotReady) => (),
-                    Err(e) => {
-                        return Err(e)
+                    Err(_e) => {
+                        unreachable!()
                     }
                 }
             }
@@ -286,7 +286,7 @@ fn initialize_subscribers(
     connection_id_source: ConnectionIdSource,
     number_of_subscribers: u64)
     -> Result<(Box<Future<Item=u64, Error=::std::io::Error> + Send>,
-               Box<Future<Item=Vec<::tokio_core::channel::Sender<ChannelElem>>,
+               Box<Future<Item=Vec<::futures::sync::mpsc::UnboundedSender<ChannelElem>>,
                           Error=::std::io::Error>>),
               ::std::io::Error>
 {
@@ -294,13 +294,13 @@ fn initialize_subscribers(
     // `error: reached the recursion limit during monomorphization (selection ambiguity)`
     let mut subscriber_read_tasks: Vec<Box<Future<Item=u64,Error=::std::io::Error> + Send>> = Vec::new();
 
-    let mut subscriber_senders: Option<Box<Future<Item=Vec<::tokio_core::channel::Sender<ChannelElem>>,
+    let mut subscriber_senders: Option<Box<Future<Item=Vec<::futures::sync::mpsc::UnboundedSender<ChannelElem>>,
                                                   Error=::std::io::Error> + Send>> =
         Some(Box::new(future::ok(Vec::new())));
     for _ in 0..number_of_subscribers {
         let subscriber_id = connection_id_source.next();
 
-        let (sender, receiver) = try!(::tokio_core::channel::channel(handle));
+        let (mut sender, receiver) = ::futures::sync::mpsc::unbounded();
         let (sender_complete, sender_oneshot) = ::futures::oneshot();
 
         let subscriber_senders1 = subscriber_senders.take().unwrap();
@@ -368,7 +368,7 @@ fn run_publisher(
     addr: &::std::net::SocketAddr,
     connection_id_source: ConnectionIdSource,
     number_of_messages: u64,
-    senders: Vec<::tokio_core::channel::Sender<ChannelElem>>)
+    senders: Vec<::futures::sync::mpsc::UnboundedSender<ChannelElem>>)
     -> Box<Future<Item=(), Error=::std::io::Error>>
 {
     let publisher = ::tokio_core::net::TcpStream::connect(addr, handle);
@@ -377,7 +377,7 @@ fn run_publisher(
     let rng: ::rand::XorShiftRng = ::rand::SeedableRng::from_seed([publisher_id as u32; 4]);
 
     Box::new(publisher.and_then(move |publisher| {
-        run_loop((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
+        run_loop((publisher, senders, rng, 0u64), move |(publisher, mut senders, mut rng, n)| {
             future::ok(()).and_then(move |()| {
                 use rand::Rng;
 
@@ -403,7 +403,7 @@ fn run_publisher(
                         count: true,
                     };
 
-                    try!(senders[idx].send(wait_for));
+                    let _ = senders[idx].send(wait_for);
                 }
 
                 let writing = Writing::new(publisher, buf);
