@@ -254,7 +254,7 @@ fn initialize_subscribers(
 {
     // Box these things to avoid the weird error:
     // `error: reached the recursion limit during monomorphization (selection ambiguity)`
-    let mut subscriber_read_tasks: Vec<Box<Future<Item=u64,Error=::std::io::Error> + Send>> = Vec::new();
+    let mut subscriber_read_tasks = Vec::new();
 
     let mut subscriber_senders: Option<Box<Future<Item=Vec<::futures::sync::mpsc::UnboundedSender<ChannelElem>>,
                                                   Error=::std::io::Error> + Send>> =
@@ -270,7 +270,7 @@ fn initialize_subscribers(
             ::std::io::Error::new(::std::io::ErrorKind::Other,"canceled")
         })));
 
-        subscriber_read_tasks.push(Box::new(TcpStream::connect(addr, handle).and_then(move |socket| {
+        subscriber_read_tasks.push(TcpStream::connect(addr, handle).and_then(move |socket| {
             subscriber_senders1.and_then(move |mut subscriber_senders|  {
                 use tokio_core::io::Io;
                 let (reader, writer) = socket.split();
@@ -308,9 +308,9 @@ fn initialize_subscribers(
                     })
                 });
 
-                read_task.join(sender_init)
-            }).map(|(n, _)| n)
-        })));
+                read_task.join(sender_init).map(|(n, _)| n)
+            })
+        }));
     }
 
     let read_tasks = future::join_all(subscriber_read_tasks).and_then(move |read_values| {
