@@ -28,44 +28,6 @@ macro_rules! fry {
         })
 }
 
-struct Loop<F, S, T, E>
-    where F: Fn(S) -> T,
-          T: Future<Item=(S, bool), Error=E>
-{
-    f: F,
-    in_progress: T,
-}
-
-fn run_loop<F, S, T, E>(initial_state: S, f: F) -> Loop<F, S, T, E>
-    where F: Fn(S) -> T,
-          T: Future<Item=(S, bool), Error=E>,
-{
-    let in_progress = f(initial_state);
-    Loop {
-        f: f,
-        in_progress: in_progress,
-    }
-}
-
-impl <F, S, T, E> Future for Loop<F, S, T, E>
-    where F: Fn(S) -> T,
-          T: Future<Item=(S, bool), Error=E>
-{
-    type Item = S;
-    type Error = E;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            let (s, more) = try_ready!(self.in_progress.poll());
-            if more {
-                self.in_progress = (self.f)(s);
-            } else {
-                return Ok(Async::Ready(s))
-            }
-        }
-    }
-}
-
 struct Reading<R> where R: ::std::io::Read {
     reader: Option<R>,
     buffer: Vec<u8>,
@@ -300,7 +262,7 @@ fn initialize_subscribers(
     for _ in 0..number_of_subscribers {
         let subscriber_id = connection_id_source.next();
 
-        let (mut sender, receiver) = ::futures::sync::mpsc::unbounded();
+        let (sender, receiver) = ::futures::sync::mpsc::unbounded();
         let (sender_complete, sender_oneshot) = ::futures::oneshot();
 
         let subscriber_senders1 = subscriber_senders.take().unwrap();
@@ -377,7 +339,7 @@ fn run_publisher(
     let rng: ::rand::XorShiftRng = ::rand::SeedableRng::from_seed([publisher_id as u32; 4]);
 
     Box::new(publisher.and_then(move |publisher| {
-        run_loop((publisher, senders, rng, 0u64), move |(publisher, mut senders, mut rng, n)| {
+        future::loop_fn((publisher, senders, rng, 0u64), move |(publisher, senders, mut rng, n)| {
             future::ok(()).and_then(move |()| {
                 use rand::Rng;
 
@@ -415,11 +377,15 @@ fn run_publisher(
                 });
 
                 writing.join(done).map(move |(writer, _done)| {
-                    ((writer, senders, rng, n + 1), n + 1 < number_of_messages)
+                    if n + 1 < number_of_messages {
+                        future::Loop::Continue((writer, senders, rng, n + 1))
+                    } else {
+                        future::Loop::Break(())
+                    }
                 })
             })
         })
-    }).map(|(_writer, _senders, _rng, _n)| ()))
+    }))
 }
 
 struct ChildProcess {
@@ -536,15 +502,15 @@ pub fn run() -> Result<(), ::std::io::Error> {
     let clock_connection = ::tokio_core::net::TcpStream::connect(&addr, &handle);
     let handle1 = handle.clone();
     handle.spawn(clock_connection.and_then(move |stream| {
-        run_loop((stream, handle1), move |(stream, handle)| {
+        future::loop_fn((stream, handle1), move |(stream, handle)| {
             use tokio_core::reactor::Timeout;
             Timeout::new(Duration::from_secs(1), &handle).expect("creating timeout").and_then(move |()| {
                 Writing::new(stream, CLOCK_PREFIX).map(move |stream| {
-                    ((stream, handle), true)
+                    future::Loop::Continue((stream, handle))
                 })
             })
         })
-    }).map(|_| ()).map_err(|e| { println!("error from clock task: {}", e); () }));
+    }).map_err(|e| { println!("error from clock task: {}", e); () }));
 
     for iter_num in 0..number_of_repetitions {
         let start_time = ::std::time::Instant::now();
