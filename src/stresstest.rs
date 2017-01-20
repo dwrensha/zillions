@@ -252,8 +252,6 @@ fn initialize_subscribers(
                           Error=::std::io::Error>>),
               ::std::io::Error>
 {
-    // Box these things to avoid the weird error:
-    // `error: reached the recursion limit during monomorphization (selection ambiguity)`
     let mut subscriber_read_tasks = Vec::new();
 
     let mut subscriber_senders: Option<Box<Future<Item=Vec<::futures::sync::mpsc::UnboundedSender<ChannelElem>>,
