@@ -53,13 +53,20 @@ impl <R> Future for Reading<R> where R: ::std::io::Read {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             if let Some(frame_end) = self.frame_end {
-                let n = try_nb!(self.reader.as_mut().unwrap().read(&mut self.buffer[self.pos..frame_end as usize]));
-                self.pos += n;
                 if self.pos == frame_end as usize {
                     self.pos = 0;
                     let result = ::std::mem::replace(&mut self.buffer, Vec::new());
                     self.frame_end = None;
                     return Ok(Async::Ready((self.reader.take().unwrap(), Some(result))))
+                } else {
+                    let n = try_nb!(
+                        self.reader.as_mut().unwrap().read(&mut self.buffer[self.pos..frame_end as usize]));
+                    self.pos += n;
+                    if n == 0 { // premature EOF
+                        return Err(::std::io::Error::new(
+                            ::std::io::ErrorKind::UnexpectedEof,
+                            format!("expected {} bytes but only got {}", frame_end, self.pos)))
+                    }
                 }
             } else {
                 let mut buf = [0u8];
