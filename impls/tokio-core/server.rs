@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate futures;
 extern crate tokio_core;
 
@@ -12,10 +11,10 @@ use std::rc::Rc;
 
 use futures::Future;
 use futures::stream::{self, Stream};
-use tokio_core::channel::{channel, Sender};
+use futures::sync::mpsc;
 use tokio_core::io::{read_exact, write_all, Io};
 use tokio_core::net::{TcpListener, TcpStream};
-use tokio_core::reactor::{Core, Handle};
+use tokio_core::reactor::Core;
 
 const MAX_BUFFERED: usize = 5;
 
@@ -43,10 +42,9 @@ fn main() {
     // Note that `futures::lazy` here is used for the call to `Io::split` below
     // in the `client` function, but it can mostly just be ignored.
     let srv = srv.incoming().for_each(|(socket, addr)| {
-        let handle2 = handle.clone();
         let map = map.clone();
         handle.spawn(futures::lazy(move || {
-            client(socket, &handle2, addr, map)
+            client(socket, addr, map)
         }));
         Ok(())
     });
@@ -60,7 +58,7 @@ fn main() {
 /// type. An instance is available for all connected clients.
 struct Client {
     // A channel to send messages over to be received and written out.
-    tx: Sender<Vec<u8>>,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
 
     // Current number of pending messages. If too many messages are pending then
     // messages to this client are dropped on the floor.
@@ -68,13 +66,12 @@ struct Client {
 }
 
 fn client(socket: TcpStream,
-          handle: &Handle,
           addr: SocketAddr,
           map: Rc<RefCell<HashMap<SocketAddr, Client>>>)
           -> Box<Future<Item=(), Error=()>> {
     // First up, register our new client by creating an entry in the global
     // state map.
-    let (tx, rx) = channel(handle).unwrap();
+    let (tx, rx) = mpsc::unbounded();
     assert!(map.borrow_mut().insert(addr, Client {
         tx: tx,
         size: 0,
@@ -123,7 +120,8 @@ fn client(socket: TcpStream,
     // iterating over all messages coming off the channel and writing them out
     // as per our protocol.
     let map2 = map.clone();
-    let writer = rx.fold(writer, move |writer, msg| {
+    let rx1 = rx.map_err(|_| -> ::std::io::Error { unreachable!() });
+    let writer = rx1.fold(writer, move |writer, msg| {
         map2.borrow_mut().get_mut(&addr).unwrap().size -= 1;
         write_all(writer, [msg.len() as u8]).and_then(|(wr, _)| {
             write_all(wr, msg).map(|p| p.0)
