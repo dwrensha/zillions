@@ -196,10 +196,9 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
                     }
                     let aa = match self.waiting_for {
                         Some(ReadTaskWaitFor { ref prefix, ref mut timeout_ticks, .. }) => {
-                            let len = prefix.len();
-                            if &message[0..len] == &prefix[..] {
+                            if message.starts_with(&prefix[..]) {
                                 Some(A::Matches)
-                            } else if &message[..CLOCK_PREFIX.len()] == CLOCK_PREFIX {
+                            } else if message.starts_with(CLOCK_PREFIX) {
                                 if *timeout_ticks == 0 {
                                     // timed out.
                                     Some(A::TimedOut)
