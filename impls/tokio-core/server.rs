@@ -120,7 +120,7 @@ fn client(socket: TcpStream,
     // iterating over all messages coming off the channel and writing them out
     // as per our protocol.
     let map2 = map.clone();
-    let rx1 = rx.map_err(|_| -> ::std::io::Error { unreachable!() });
+    let rx1 = rx.map_err(|_| -> io::Error { unreachable!() });
     let writer = rx1.fold(writer, move |writer, msg| {
         map2.borrow_mut().get_mut(&addr).unwrap().size -= 1;
         write_all(writer, [msg.len() as u8]).and_then(|(wr, _)| {
