@@ -231,7 +231,7 @@ impl <R> Future for ReadTask<R> where R: ::std::io::Read {
                                     format!("expected: {:?}\n received: {:?}", waiting_for.buf, message)));
                             }
 
-                            waiting_for.complete.complete(message);
+                            let _ = waiting_for.complete.send(message);
                         }
                         Some(A::TimedOut) => {
                             self.waiting_for.take();
@@ -308,7 +308,7 @@ fn initialize_subscribers(
                         if succeeded {
                             subscriber_senders.push(sender)
                         }
-                        sender_complete.complete(subscriber_senders);
+                        let _ = sender_complete.send(subscriber_senders);
                     })
                 });
 
