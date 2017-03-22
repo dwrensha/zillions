@@ -8,6 +8,7 @@ extern crate futures_cpupool;
 
 #[macro_use]
 extern crate tokio_core;
+extern crate tokio_io;
 
 use futures::{Async, Poll, Future, Complete, future};
 use tokio_core::net::TcpStream;
@@ -276,7 +277,7 @@ fn initialize_subscribers(
 
         subscriber_read_tasks.push(TcpStream::connect(addr, handle).and_then(move |socket| {
             subscriber_senders1.and_then(move |mut subscriber_senders|  {
-                use tokio_core::io::Io;
+                use tokio_io::AsyncRead;
                 let (reader, writer) = socket.split();
                 let read_task = ReadTask::new(reader, receiver);
 
