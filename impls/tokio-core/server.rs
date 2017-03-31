@@ -1,4 +1,5 @@
 extern crate futures;
+extern crate tokio_io;
 extern crate tokio_core;
 
 use std::cell::RefCell;
@@ -12,7 +13,8 @@ use std::rc::Rc;
 use futures::Future;
 use futures::stream::{self, Stream};
 use futures::sync::mpsc;
-use tokio_core::io::{read_exact, write_all, Io};
+use tokio_io::AsyncRead;
+use tokio_io::io::{read_exact, write_all};
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::Core;
 

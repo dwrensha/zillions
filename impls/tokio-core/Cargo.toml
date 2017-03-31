@@ -5,6 +5,7 @@ authors = ["David Renshaw <david@sandstorm.io>"]
 
 [dependencies]
 futures = "0.1.1"
+tokio-io = "0.1"
 tokio-core = "0.1"
 
 [[bin]]
